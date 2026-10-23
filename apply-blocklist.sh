@@ -52,6 +52,13 @@ done
 echo "=== PF Blocklist Applier ==="
 echo ""
 
+# Check if running as root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root (use doas)"
+    echo "Usage: doas $0"
+    exit 1
+fi
+
 # Check git status
 if [ ! -d "$SCRIPT_DIR/.git" ]; then
     echo "ERROR: Not a git repository"
@@ -166,6 +173,17 @@ echo "✓ PF config valid"
 echo "Reloading PF rules..."
 if pfctl -f "$PF_CONF" 2>&1; then
     echo "✓ PF rules reloaded successfully"
+else
+    echo "✗ Failed to reload PF rules"
+    echo "Restoring backup..."
+    [ -f "$BACKUP_FILE" ] && mv "$BACKUP_FILE" "$BLOCKLIST_FILE"
+    exit 1
+fi
+
+# Explicitly load blocklist table
+echo "Loading blocklist table..."
+if pfctl -t blacklist -T replace -f "$BLOCKLIST_FILE" 2>&1; then
+    echo "✓ Blocklist table loaded"
 
     # Show blacklist table stats
     echo ""
@@ -173,9 +191,7 @@ if pfctl -f "$PF_CONF" 2>&1; then
     BLACKLIST_COUNT=$(pfctl -t blacklist -T show 2>/dev/null | wc -l | tr -d ' ')
     echo "  Loaded entries: $BLACKLIST_COUNT"
 else
-    echo "✗ Failed to reload PF rules"
-    echo "Restoring backup..."
-    [ -f "$BACKUP_FILE" ] && mv "$BACKUP_FILE" "$BLOCKLIST_FILE"
+    echo "✗ Failed to load blocklist table"
     exit 1
 fi
 
