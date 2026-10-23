@@ -233,24 +233,28 @@ echo "Loading blocklist table..."
 ENTRY_COUNT=$(wc -l < "$BLOCKLIST_FILE" | tr -d ' ')
 echo "  Entries to load: $ENTRY_COUNT"
 
-if [ "$ENTRY_COUNT" -gt 100000 ]; then
+if [ "$ENTRY_COUNT" -gt 50000 ]; then
     echo "  Using chunked loading (large blocklist)..."
-    # Split into 50k chunks
-    split -l 50000 "$BLOCKLIST_FILE" "$TEMP_DIR/chunk."
+    # Split into 10k chunks (memory-friendly)
+    split -l 10000 "$BLOCKLIST_FILE" "$TEMP_DIR/chunk."
 
     # Flush existing table
     pfctl -t blocklist -T flush 2>/dev/null || true
+
+    # Count total chunks
+    TOTAL_CHUNKS=$(ls -1 "$TEMP_DIR"/chunk.* 2>/dev/null | wc -l | tr -d ' ')
 
     # Load each chunk
     CHUNK_NUM=0
     for chunk in "$TEMP_DIR"/chunk.*; do
         CHUNK_NUM=$((CHUNK_NUM + 1))
         CHUNK_SIZE=$(wc -l < "$chunk" | tr -d ' ')
-        echo "  Loading chunk $CHUNK_NUM ($CHUNK_SIZE entries)..."
-        if ! pfctl -t blocklist -T add -f "$chunk" 2>&1; then
-            echo "✗ Failed to load chunk $CHUNK_NUM"
+        printf "  [%d/%d] Loading %d entries... " "$CHUNK_NUM" "$TOTAL_CHUNKS" "$CHUNK_SIZE"
+        if pfctl -t blocklist -T add -f "$chunk" 2>&1 | grep -v "^$"; then
+            echo "✗ Failed"
             exit 1
         fi
+        echo "✓"
     done
     echo "✓ Blocklist table loaded (chunked)"
 else
