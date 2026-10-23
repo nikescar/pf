@@ -267,6 +267,13 @@ convert_to_cidr
 mv "$TEMP_DIR/blocklist_final.txt" "$BLOCKLIST_FILE"
 echo "Deployed to $BLOCKLIST_FILE"
 
+# CI mode: skip PF operations
+if [ -n "$CI" ]; then
+    echo "[CI] Blocklist generated successfully: $BLOCKLIST_FILE"
+    echo "[CI] Skipping PF validation and reload"
+    exit 0
+fi
+
 # Validate PF config
 echo "Validating PF config..."
 VALIDATION_OUTPUT=$(pfctl -nvf "$PF_CONF" 2>&1)

@@ -1,7 +1,6 @@
 
 .env
-blocklist
-blocklist*
+blocklist.2*
 tmp/
 ip2asn*
 inbound.txt

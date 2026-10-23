@@ -1,0 +1,57 @@
+name: Update Blocklist
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Every Sunday at 2am UTC
+  workflow_dispatch:      # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  update-blocklist:
+    runs-on: ubuntu-latest
+
+    env:
+      PF_BLOCKLIST_INBOUND_URL: "https://raw.githubusercontent.com/bitwire-it/ipblocklist/refs/heads/main/inbound.txt"
+      PF_BLOCKLIST_OUTBOUND_URL: "https://raw.githubusercontent.com/bitwire-it/ipblocklist/refs/heads/main/outbound.txt"
+      PF_IP2ASN_URL: "https://iptoasn.com/data/ip2asn-v4.tsv.gz"
+      PF_BLOCKLIST_CACHE_DAYS: "180"
+      CI: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: |
+          cat > .env <<EOF
+          PF_BLOCKLIST_INBOUND_URL="${{ env.PF_BLOCKLIST_INBOUND_URL }}"
+          PF_BLOCKLIST_OUTBOUND_URL="${{ env.PF_BLOCKLIST_OUTBOUND_URL }}"
+          PF_IP2ASN_URL="${{ env.PF_IP2ASN_URL }}"
+          PF_BLOCKLIST_CACHE_DAYS="${{ env.PF_BLOCKLIST_CACHE_DAYS }}"
+          PF_OUTPUT_FILE="./pf.conf"
+          EOF
+
+      - name: Run blocklist update
+        run: |
+          chmod +x ./update-blocklist.sh
+          ./update-blocklist.sh
+
+      - name: Check for changes
+        id: git-check
+        run: |
+          git diff --exit-code blocklist || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push if changed
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add blocklist
+          git commit -m "chore: update blocklist (automated weekly update)"
+          git push
+
+      - name: No changes
+        if: steps.git-check.outputs.changed != 'true'
+        run: echo "No changes to blocklist"
