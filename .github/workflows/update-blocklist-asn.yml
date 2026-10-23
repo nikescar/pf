@@ -3,7 +3,18 @@ name: Update Blocklist
 on:
   schedule:
     - cron: '0 2 * * 0'  # Every Sunday at 2am UTC
-  workflow_dispatch:      # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: 'Force fresh download (skip cache)'
+        required: false
+        type: boolean
+        default: false
+      skip_commit:
+        description: 'Generate blocklist but skip commit (test mode)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -33,6 +44,12 @@ jobs:
           PF_OUTPUT_FILE="./pf.conf"
           EOF
 
+      - name: Clear cache if force update
+        if: github.event.inputs.force_update == 'true'
+        run: |
+          rm -f ip2asn-v4.tsv ip2asn-v4-int.tsv inbound.txt outbound.txt
+          echo "Cache cleared for force update"
+
       - name: Run blocklist update
         run: |
           chmod +x ./update-blocklist.sh
@@ -44,13 +61,17 @@ jobs:
           git diff --exit-code blocklist || echo "changed=true" >> $GITHUB_OUTPUT
 
       - name: Commit and push if changed
-        if: steps.git-check.outputs.changed == 'true'
+        if: steps.git-check.outputs.changed == 'true' && github.event.inputs.skip_commit != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add blocklist
           git commit -m "chore: update blocklist (automated weekly update)"
           git push
+
+      - name: Skip commit (test mode)
+        if: steps.git-check.outputs.changed == 'true' && github.event.inputs.skip_commit == 'true'
+        run: echo "Blocklist updated but commit skipped (test mode)"
 
       - name: No changes
         if: steps.git-check.outputs.changed != 'true'
