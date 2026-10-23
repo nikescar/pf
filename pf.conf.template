@@ -32,7 +32,8 @@ icmp_types = "{ echoreq, unreach }"
 table <martians> persist { 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 192.88.99.0/24 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4 248.0.0.0/5 255.255.255.255/32 }
 
 #Blacklist session of bad WAN IP-address(es) [LAN <-> WAN]
-table <blacklist> persist file "SCRIPT_DIR/blocklist"
+#Note: Large blocklist loaded dynamically via pfctl -t blacklist -T replace -f blocklist
+table <blacklist> persist
 #SSH brute-force blacklist [Management network <> Edge firewall]
 table <bruteforce> persist
 
