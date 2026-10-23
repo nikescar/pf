@@ -182,14 +182,14 @@ fi
 
 # Explicitly load blocklist table
 echo "Loading blocklist table..."
-if pfctl -t blacklist -T replace -f "$BLOCKLIST_FILE" 2>&1; then
+if pfctl -t blocklist -T replace -f "$BLOCKLIST_FILE" 2>&1; then
     echo "✓ Blocklist table loaded"
 
-    # Show blacklist table stats
+    # Show blocklist table stats
     echo ""
-    echo "Blacklist table status:"
-    BLACKLIST_COUNT=$(pfctl -t blacklist -T show 2>/dev/null | wc -l | tr -d ' ')
-    echo "  Loaded entries: $BLACKLIST_COUNT"
+    echo "Blocklist table status:"
+    BLOCKLIST_COUNT=$(pfctl -t blocklist -T show 2>/dev/null | wc -l | tr -d ' ')
+    echo "  Loaded entries: $BLOCKLIST_COUNT"
 else
     echo "✗ Failed to load blocklist table"
     exit 1

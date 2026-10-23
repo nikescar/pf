@@ -330,6 +330,135 @@ convert_to_cidr() {
 }
 
 #
+# Function: Filter whitelisted ranges
+#
+filter_whitelist() {
+    echo "Filtering whitelisted ranges..."
+
+    # Check if whitelist is defined
+    if [ -z "$PF_WHITELIST_RANGES" ]; then
+        echo "No whitelist defined, skipping filter"
+        return
+    fi
+
+    # Create whitelist file
+    echo "$PF_WHITELIST_RANGES" | tr ' ' '\n' > "$TEMP_DIR/whitelist.txt"
+
+    local whitelist_count=$(wc -l < "$TEMP_DIR/whitelist.txt" | tr -d ' ')
+    echo "Whitelist entries: $whitelist_count"
+
+    # Filter using awk to check CIDR overlap
+    awk '
+    # CIDR to IP range conversion
+    function cidr2range(cidr,    parts, ip, mask, ip_int, mask_int, start, end) {
+        split(cidr, parts, "/");
+        ip = parts[1];
+        mask = parts[2];
+
+        # IP to integer
+        split(ip, a, ".");
+        ip_int = (a[1] * 16777216) + (a[2] * 65536) + (a[3] * 256) + a[4];
+
+        # Calculate network mask
+        mask_int = 0;
+        for (i = 0; i < mask; i++) {
+            mask_int = mask_int + (2 ^ (31 - i));
+        }
+
+        # Network address
+        start = bitand(ip_int, mask_int);
+        # Broadcast address
+        end = bitor(start, bitxor(4294967295, mask_int));
+
+        return start "," end;
+    }
+
+    # Bitwise AND
+    function bitand(a, b,    result, bit) {
+        result = 0;
+        for (bit = 1; bit <= 4294967295; bit *= 2) {
+            if ((int(a / bit) % 2) && (int(b / bit) % 2)) {
+                result += bit;
+            }
+            if (bit > a && bit > b) break;
+        }
+        return result;
+    }
+
+    # Bitwise OR
+    function bitor(a, b,    result, bit) {
+        result = 0;
+        for (bit = 1; bit <= 4294967295; bit *= 2) {
+            if ((int(a / bit) % 2) || (int(b / bit) % 2)) {
+                result += bit;
+            }
+            if (bit > a && bit > b) break;
+        }
+        return result;
+    }
+
+    # Bitwise XOR
+    function bitxor(a, b,    result, bit) {
+        result = 0;
+        for (bit = 1; bit <= 4294967295; bit *= 2) {
+            if ((int(a / bit) % 2) != (int(b / bit) % 2)) {
+                result += bit;
+            }
+            if (bit > a && bit > b) break;
+        }
+        return result;
+    }
+
+    # Check if two ranges overlap
+    function ranges_overlap(start1, end1, start2, end2) {
+        return (start1 <= end2) && (end1 >= start2);
+    }
+
+    NR == FNR {
+        # Load whitelist ranges
+        split(cidr2range($1), range, ",");
+        wl_start[NR] = range[1];
+        wl_end[NR] = range[2];
+        wl_count = NR;
+        next;
+    }
+    {
+        # Check each blocklist entry
+        split($0, fields, "\t");
+        cidr = fields[1];
+
+        # Get range for this CIDR
+        split(cidr2range(cidr), range, ",");
+        bl_start = range[1];
+        bl_end = range[2];
+
+        # Check overlap with whitelist
+        overlap = 0;
+        for (i = 1; i <= wl_count; i++) {
+            if (ranges_overlap(bl_start, bl_end, wl_start[i], wl_end[i])) {
+                overlap = 1;
+                break;
+            }
+        }
+
+        # Output if no overlap
+        if (!overlap) {
+            print $0;
+        }
+    }
+    ' "$TEMP_DIR/whitelist.txt" "$TEMP_DIR/combined_filtered.txt" > "$TEMP_DIR/combined_whitelist_filtered.txt"
+
+    local before=$(wc -l < "$TEMP_DIR/combined_filtered.txt" | tr -d ' ')
+    local after=$(wc -l < "$TEMP_DIR/combined_whitelist_filtered.txt" | tr -d ' ')
+    local removed=$((before - after))
+
+    echo "Removed $removed whitelisted ranges (${before} -> ${after})"
+
+    # Replace filtered file
+    mv "$TEMP_DIR/combined_whitelist_filtered.txt" "$TEMP_DIR/combined_filtered.txt"
+}
+
+#
 # Main execution
 #
 
@@ -359,6 +488,9 @@ create_metadata
 # Convert to CIDR and finalize
 convert_to_cidr
 
+# Filter whitelisted ranges
+filter_whitelist
+
 # Deploy new blocklist and info file
 mv "$TEMP_DIR/blocklist_final.txt" "$BLOCKLIST_FILE"
 mv "$TEMP_DIR/info_final.txt" "${BLOCKLIST_FILE}.info.txt"
@@ -386,7 +518,7 @@ echo "Reloading PF rules..."
 pfctl -f "$PF_CONF"
 
 # Verify table loaded
-ACTIVE_RULES=$(pfctl -t blacklist -T show 2>/dev/null | wc -l | tr -d ' ')
+ACTIVE_RULES=$(pfctl -t blocklist -T show 2>/dev/null | wc -l | tr -d ' ')
 echo "PF reload complete. Blocking $ACTIVE_RULES IP ranges."
 
 # Cleanup old backups (keep last 5)

@@ -31,10 +31,10 @@ icmp_types = "{ echoreq, unreach }"
 #RFC1918 and RFC5735 local address ranges which should not be routed over the WAN back and forth [LAN <-> WAN]
 table <martians> persist { 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 192.88.99.0/24 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4 248.0.0.0/5 255.255.255.255/32 }
 
-#Blacklist session of bad WAN IP-address(es) [LAN <-> WAN]
-#Note: Large blocklist loaded dynamically via pfctl -t blacklist -T replace -f blocklist
-table <blacklist> persist
-#SSH brute-force blacklist [Management network <> Edge firewall]
+#Blocklist of bad WAN IP-address(es) [LAN <-> WAN]
+#Note: Large blocklist loaded dynamically via pfctl -t blocklist -T replace -f blocklist
+table <blocklist> persist
+#SSH brute-force blocklist [Management network <> Edge firewall]
 table <bruteforce> persist
 
 ##################
@@ -84,14 +84,15 @@ block drop in quick on $isp proto tcp from any to any flags R/R
 ### SEC_NONSYN_END ###
 
 #Block all traffic with a spoofed source IP-address from the network directly connected to the specified NIC from entering the system through any other NIC
-antispoof quick for { $isp lo0 }
+#Note: antispoof on ISP interface disabled - causes issues when ISP interface has private IP
+antispoof quick for lo0
 
 ##################
 #INPUT rules     #
 ##################
-#[WAN <- Martians & blacklisted IP-addresses]
-#Block packets from wrong address ranges and blacklisted IPs
-block drop in quick on $isp from {<martians>, <blacklist>} to any
+#[WAN <- Martians & blocklisted IP-addresses]
+#Block packets from wrong address ranges and blocklisted IPs
+block drop in quick on $isp from {<martians>, <blocklist>} to any
 
 ### SEC_CONNLIMIT_START ###
 # Connection limiting per source IP
@@ -134,14 +135,14 @@ antispoof quick for { lo $lan }
 ##################
 #OUTPUT rules    #
 ##################
-#[WAN -> Martians & blacklisted IPs]
-#Do not sent RFC1918 IP-addresses over the WAN and do not access blacklisted IP-addresses
-block drop out quick on $isp from any to {<martians>, <blacklist>}
+#[WAN -> Martians & blocklisted IPs]
+#Do not sent RFC1918 IP-addresses over the WAN and do not access blocklisted IP-addresses
+block drop out quick on $isp from any to {<martians>, <blocklist>}
 
 #Allow traffic from the edge firewall WAN interface to route to the WAN for ping, nslookup and system updates
 #[(WAN) Firewall -> WAN]
 ### NO_LAN_START ###
-#pass out on $isp proto { tcp udp icmp } from ($isp) to any
+#pass out on $isp proto { tcp udp icmp } all
 ### NO_LAN_END ###
 
 ##################
@@ -152,7 +153,7 @@ block drop out quick on $isp from any to {<martians>, <blacklist>}
 #Perform NAT on the WAN interface for any packet coming from the LAN and replace the source IP address with the WAN gateway
 
 #Firewall's own traffic
-pass out on $isp proto { tcp udp icmp } from ($isp) to any
+pass out on $isp proto { tcp udp icmp } all
 
 #UDP
 pass out proto udp from $lan:network to any port $nat_udp_ports nat-to $isp keep state

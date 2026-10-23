@@ -1,4 +1,4 @@
-# OpenBSD PF with Firehol Blacklist
+# OpenBSD PF with Firehol Blocklist
 
 Adaptive firewall with automatic threat IP blocking (45K+ IPs) and optional security rules.
 
@@ -15,7 +15,7 @@ pfctl -f /etc/pf.conf
 
 # 3. Verify
 pfctl -sr | head -20
-pfctl -t blacklist -T show | wc -l
+pfctl -t blocklist -T show | wc -l
 ```
 
 ## Configuration (.env)
