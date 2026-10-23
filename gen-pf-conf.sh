@@ -142,3 +142,14 @@ echo "Security rules enabled:"
 echo ""
 echo "Apply: pfctl -f $OUTPUT"
 echo "Verify: pfctl -sr | head -20"
+echo ""
+
+# Load blocklist if it exists
+if [ -f "$SCRIPT_DIR/blocklist" ] && [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
+    echo "Loading blocklist table..."
+    if [ "$(id -u)" -eq 0 ]; then
+        "$SCRIPT_DIR/apply-blocklist.sh" --local-only --check-only
+    else
+        echo "  Note: Run with root to load blocklist: doas ./apply-blocklist.sh --local-only"
+    fi
+fi

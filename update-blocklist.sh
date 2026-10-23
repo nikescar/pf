@@ -313,6 +313,16 @@ convert_to_cidr() {
     grep -Ev "^192\.168\.|^10\.|^172\.(1[6-9]|2[0-9]|3[01])\.|^127\.|^0\.|^169\.254\." \
         "$TEMP_DIR/combined_all.txt" > "$TEMP_DIR/combined_filtered.txt"
 
+    local filtered_count=$(wc -l < "$TEMP_DIR/combined_filtered.txt" | tr -d ' ')
+    echo "Generated $filtered_count unique CIDR blocks with metadata (before whitelist filter)"
+}
+
+#
+# Function: Finalize blocklist (sort and split)
+#
+finalize_blocklist() {
+    echo "Finalizing blocklist..."
+
     # Sort by CIDR and remove duplicates
     sort -u -k1,1 "$TEMP_DIR/combined_filtered.txt" > "$TEMP_DIR/combined_sorted.txt"
 
@@ -321,7 +331,7 @@ convert_to_cidr() {
     awk -F'\t' '{print $2}' "$TEMP_DIR/combined_sorted.txt" > "$TEMP_DIR/info_final.txt"
 
     local final_count=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
-    echo "Generated $final_count unique CIDR blocks with metadata"
+    echo "Final blocklist: $final_count entries"
 
     if [ "$final_count" -eq 0 ]; then
         echo "ERROR: Final blocklist is empty"
@@ -485,11 +495,14 @@ find_ranges
 # Generate metadata for ranges
 create_metadata
 
-# Convert to CIDR and finalize
+# Convert to CIDR
 convert_to_cidr
 
 # Filter whitelisted ranges
 filter_whitelist
+
+# Finalize blocklist (sort and split after whitelist filter)
+finalize_blocklist
 
 # Deploy new blocklist and info file
 mv "$TEMP_DIR/blocklist_final.txt" "$BLOCKLIST_FILE"
@@ -503,23 +516,28 @@ if [ -n "$CI" ]; then
     exit 0
 fi
 
-# Validate PF config
-echo "Validating PF config..."
-VALIDATION_OUTPUT=$(pfctl -nvf "$PF_CONF" 2>&1)
-if echo "$VALIDATION_OUTPUT" | grep -q "syntax error"; then
-    echo "ERROR: PF config has syntax errors. Restoring backup."
-    echo "$VALIDATION_OUTPUT" | grep "syntax error"
-    mv "$BACKUP_FILE" "$BLOCKLIST_FILE"
-    exit 1
+# Use apply-blocklist.sh to load the blocklist
+echo "Loading blocklist via apply-blocklist.sh..."
+if [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
+    if "$SCRIPT_DIR/apply-blocklist.sh" --local-only --force; then
+        echo "✓ Blocklist loaded successfully"
+    else
+        echo "✗ Failed to load blocklist"
+        mv "$BACKUP_FILE" "$BLOCKLIST_FILE" 2>/dev/null || true
+        exit 1
+    fi
+else
+    echo "WARNING: apply-blocklist.sh not found, using fallback method"
+    echo "Validating PF config..."
+    if ! pfctl -nvf "$PF_CONF" >/dev/null 2>&1; then
+        echo "ERROR: PF config validation failed"
+        mv "$BACKUP_FILE" "$BLOCKLIST_FILE" 2>/dev/null || true
+        exit 1
+    fi
+    echo "Reloading PF rules..."
+    pfctl -f "$PF_CONF"
+    echo "Note: Install apply-blocklist.sh for better table loading"
 fi
-
-# Reload PF rules
-echo "Reloading PF rules..."
-pfctl -f "$PF_CONF"
-
-# Verify table loaded
-ACTIVE_RULES=$(pfctl -t blocklist -T show 2>/dev/null | wc -l | tr -d ' ')
-echo "PF reload complete. Blocking $ACTIVE_RULES IP ranges."
 
 # Cleanup old backups (keep last 5)
 ls -t "$SCRIPT_DIR"/blocklist.2* 2>/dev/null | grep -v '\.info\.txt$' | tail -n +6 | xargs rm -f 2>/dev/null || true
