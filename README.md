@@ -31,16 +31,43 @@ pfctl -t blacklist -T show | wc -l
 
 See `.env.example` for all options.
 
-## Weekly Auto-Update
+## Blocklist Updates
+
+### Automated (Recommended)
+
+GitHub CI regenerates blocklist weekly (Sunday 2am UTC):
 
 ```bash
-crontab -e
-# Add: 0 3 * * 0 /path/to/update-blocklist.sh > /tmp/pf-update.log 2>&1
+# On OpenBSD: pull and apply latest blocklist
+doas ./apply-blocklist.sh
+
+# Preview changes without applying
+./apply-blocklist.sh --dry-run
+
+# Pull but don't reload PF
+./apply-blocklist.sh --check-only
 ```
+
+**Cron setup** (weekly check):
+```bash
+crontab -e
+# Add: 0 3 * * 1 cd /path/to/pf && doas ./apply-blocklist.sh
+```
+
+### Manual Regeneration
+
+For local processing (slow, use only if needed):
+
+```bash
+./update-blocklist.sh  # Regenerates from source IPs (~5-10 min)
+```
+
+GitHub workflow can also be triggered manually via Actions → "Update Blocklist" → "Run workflow".
 
 ## Files
 
 - `.env` - Configuration (copy from `.env.example`)
 - `pf.conf.template` - Master template
 - `gen-pf-conf.sh` - Config generator
-- `update-blocklist.sh` - Blocklist updater
+- `apply-blocklist.sh` - Pull pre-generated blocklist (fast)
+- `update-blocklist.sh` - Regenerate blocklist locally (slow)
