@@ -193,6 +193,40 @@ find_ranges() {
 }
 
 #
+# Function: Create metadata for each IP range
+#
+create_metadata() {
+    echo "Generating metadata for IP ranges..."
+
+    awk '
+    NR == FNR {
+        # Load ip2asn metadata: key = "start_ip end_ip"
+        key = $1 " " $2;
+        asn[key] = $3;
+        country[key] = $4;
+        # Description is everything after field 4
+        desc[key] = "";
+        for (i = 5; i <= NF; i++) {
+            if (i > 5) desc[key] = desc[key] " ";
+            desc[key] = desc[key] $i;
+        }
+        next;
+    }
+    {
+        # For each range, lookup metadata
+        key = $1 " " $2;
+        c = (country[key] != "") ? country[key] : "??";
+        a = (asn[key] != "") ? asn[key] : "0";
+        d = (desc[key] != "") ? desc[key] : "Unknown";
+        print $1, $2, a, c, d;
+    }
+    ' "$IP2ASN_CACHE" "$TEMP_DIR/ip_ranges.txt" > "$TEMP_DIR/ip_metadata.txt"
+
+    local meta_count=$(wc -l < "$TEMP_DIR/ip_metadata.txt" | tr -d ' ')
+    echo "Generated metadata for $meta_count ranges"
+}
+
+#
 # Function: Convert IP range to CIDR (simple approximation)
 #
 range_to_cidr() {
@@ -220,20 +254,74 @@ range_to_cidr() {
 # Function: Convert all ranges to CIDR notation
 #
 convert_to_cidr() {
-    echo "Converting IP ranges to CIDR notation..."
+    echo "Converting IP ranges to CIDR notation with metadata..."
 
-    > "$TEMP_DIR/cidr_list.txt"
+    # Process all ranges with awk (much faster than shell loop)
+    awk '
+    # IP to integer conversion
+    function ip2int(ip) {
+        split(ip, p, ".");
+        return (p[1] * 16777216) + (p[2] * 65536) + (p[3] * 256) + p[4];
+    }
 
-    while read -r start end; do
-        range_to_cidr "$start" "$end" >> "$TEMP_DIR/cidr_list.txt"
-    done < "$TEMP_DIR/ip_ranges.txt"
+    # Range to CIDR approximation
+    function range_to_cidr(start_ip, end_ip) {
+        start = ip2int(start_ip);
+        end = ip2int(end_ip);
+        size = end - start + 1;
 
-    # Filter private IPs and deduplicate
-    grep -Ev "^192\.168\.|^10\.|^172\.(1[6-9]|2[0-9]|3[01])\.|^127\.|^0\.|^169\.254\." "$TEMP_DIR/cidr_list.txt" | \
-        sort -u > "$TEMP_DIR/blocklist_final.txt"
+        # Find closest power of 2
+        prefix = 32;
+        block = 1;
+        while (block < size && prefix > 0) {
+            prefix--;
+            block *= 2;
+        }
+
+        return start_ip "/" prefix;
+    }
+
+    NR == FNR {
+        # Load metadata: line N has metadata for range N
+        meta_asn[NR] = $3;
+        meta_country[NR] = $4;
+        meta_isp[NR] = "";
+        for (i = 5; i <= NF; i++) {
+            if (i > 5) meta_isp[NR] = meta_isp[NR] " ";
+            meta_isp[NR] = meta_isp[NR] $i;
+        }
+        next;
+    }
+    {
+        # Process ranges: line N from ip_ranges.txt
+        start_ip = $1;
+        end_ip = $2;
+        cidr = range_to_cidr(start_ip, end_ip);
+
+        # Get metadata for this line
+        asn = meta_asn[FNR];
+        country = meta_country[FNR];
+        isp = meta_isp[FNR];
+
+        # Format: CIDR<tab>Country | ASN | ISP | Range
+        info = country " | AS" asn " | " isp " | " start_ip "-" end_ip;
+        print cidr "\t" info;
+    }
+    ' "$TEMP_DIR/ip_metadata.txt" "$TEMP_DIR/ip_ranges.txt" > "$TEMP_DIR/combined_all.txt"
+
+    # Filter private IPs (both CIDR and info together)
+    grep -Ev "^192\.168\.|^10\.|^172\.(1[6-9]|2[0-9]|3[01])\.|^127\.|^0\.|^169\.254\." \
+        "$TEMP_DIR/combined_all.txt" > "$TEMP_DIR/combined_filtered.txt"
+
+    # Sort by CIDR and remove duplicates
+    sort -u -k1,1 "$TEMP_DIR/combined_filtered.txt" > "$TEMP_DIR/combined_sorted.txt"
+
+    # Split into separate files
+    awk -F'\t' '{print $1}' "$TEMP_DIR/combined_sorted.txt" > "$TEMP_DIR/blocklist_final.txt"
+    awk -F'\t' '{print $2}' "$TEMP_DIR/combined_sorted.txt" > "$TEMP_DIR/info_final.txt"
 
     local final_count=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
-    echo "Generated $final_count unique CIDR blocks"
+    echo "Generated $final_count unique CIDR blocks with metadata"
 
     if [ "$final_count" -eq 0 ]; then
         echo "ERROR: Final blocklist is empty"
@@ -251,6 +339,11 @@ if [ -f "$BLOCKLIST_FILE" ]; then
     echo "Backed up to $BACKUP_FILE"
 fi
 
+# Backup existing info file
+if [ -f "${BLOCKLIST_FILE}.info.txt" ]; then
+    cp "${BLOCKLIST_FILE}.info.txt" "${BACKUP_FILE}.info.txt"
+fi
+
 # Download and cache ip2asn database
 download_ip2asn
 
@@ -260,12 +353,16 @@ download_ip_lists
 # Find IP ranges for sample IPs
 find_ranges
 
+# Generate metadata for ranges
+create_metadata
+
 # Convert to CIDR and finalize
 convert_to_cidr
 
-# Deploy new blocklist
+# Deploy new blocklist and info file
 mv "$TEMP_DIR/blocklist_final.txt" "$BLOCKLIST_FILE"
-echo "Deployed to $BLOCKLIST_FILE"
+mv "$TEMP_DIR/info_final.txt" "${BLOCKLIST_FILE}.info.txt"
+echo "Deployed to $BLOCKLIST_FILE and ${BLOCKLIST_FILE}.info.txt"
 
 # CI mode: skip PF operations
 if [ -n "$CI" ]; then
@@ -293,6 +390,7 @@ ACTIVE_RULES=$(pfctl -t blacklist -T show 2>/dev/null | wc -l | tr -d ' ')
 echo "PF reload complete. Blocking $ACTIVE_RULES IP ranges."
 
 # Cleanup old backups (keep last 5)
-ls -t "$SCRIPT_DIR"/blocklist.2* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+ls -t "$SCRIPT_DIR"/blocklist.2* 2>/dev/null | grep -v '\.info\.txt$' | tail -n +6 | xargs rm -f 2>/dev/null || true
+ls -t "$SCRIPT_DIR"/blocklist.2*.info.txt 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
 
 echo "[$(date)] Blocklist update complete."
