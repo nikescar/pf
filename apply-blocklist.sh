@@ -221,6 +221,13 @@ else
     exit 1
 fi
 
+# Ensure blocklist table exists before loading
+echo "Ensuring blocklist table exists..."
+if ! pfctl -t blocklist -T show >/dev/null 2>&1; then
+    echo "  Creating blocklist table..."
+    pfctl -t blocklist -T add 2>/dev/null || true
+fi
+
 # Explicitly load blocklist table with chunked loading for large files
 echo "Loading blocklist table..."
 ENTRY_COUNT=$(wc -l < "$BLOCKLIST_FILE" | tr -d ' ')
