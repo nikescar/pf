@@ -1,0 +1,161 @@
+# pf.conf - Conditional template (auto-generated to /etc/pf.conf)
+# Run: ./gen-pf-conf.sh
+
+##################
+#Variables       #
+##################
+isp="PF_ISP_INTERFACE"
+### LAN_START ###
+lan="PF_LAN_INTERFACE"
+### LAN_END ###
+# openvpn="em2"
+# management="em3"
+
+##################
+#Ports           #
+##################
+#Allow outgoing traffic based on port IANA standards [LAN -> WAN]
+#TCP 993  = IMAPS
+#UDP 1194 = OpenVPN
+#TCP 5222:5223 plus 5228 = WhatsApp
+
+nat_tcp_ports="{ ssh, smtps, imaps, http, https, 993, 5222:5223, 5228 }"
+nat_udp_ports="{ ntp, https, domain, 1194 }"
+
+#Allow outgoing ping requests [LAN -> WAN]
+icmp_types = "{ echoreq, unreach }"
+
+##################
+#Tables          #
+##################
+#RFC1918 and RFC5735 local address ranges which should not be routed over the WAN back and forth [LAN <-> WAN]
+table <martians> persist { 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 192.88.99.0/24 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4 248.0.0.0/5 255.255.255.255/32 }
+
+#Blacklist session of bad WAN IP-address(es) [LAN <-> WAN]
+table <blacklist> persist file "SCRIPT_DIR/blocklist"
+#SSH brute-force blacklist [Management network <> Edge firewall]
+table <bruteforce> persist
+
+##################
+#Security rules  #
+##################
+#Skip any packet filtering on the localhost interface
+set skip on lo0
+
+#Drop all other traffic traffic unless it is whitelisted. PF automatically appends "keep state flags S/SA"
+block drop all
+
+#Dropping is less expensive than rejecting
+set block-policy drop
+
+#Reassemble packets
+set reassemble yes
+
+#Scrub packets
+match in on $isp scrub (no-df max-mss 1440)
+match out on $isp scrub (random-id)
+
+### SEC_MSS_START ###
+# Enforce MSS limits to prevent fragmentation attacks
+match in on $isp scrub (max-mss PF_MAX_MSS)
+### SEC_MSS_END ###
+
+### SEC_SCANNER_START ###
+# Port scanner detection and blocking
+table <port_scanners> persist
+block drop in quick from <port_scanners>
+### SEC_SCANNER_END ###
+
+### SEC_STATE_START ###
+# Drop packets with invalid TCP flags
+block drop in quick on $isp proto tcp from any to any flags FUP/WEUAPRSF
+block drop in quick on $isp proto tcp from any to any flags WEUAPRSF/WEUAPRSF
+block drop in quick on $isp proto tcp from any to any flags SRAFU/WEUAPRSF
+block drop in quick on $isp proto tcp from any to any flags /WEUAPRSF
+block drop in quick on $isp proto tcp from any to any flags SR/SR
+block drop in quick on $isp proto tcp from any to any flags SF/SF
+### SEC_STATE_END ###
+
+### SEC_NONSYN_START ###
+# Drop new TCP connections without SYN flag
+block drop in quick on $isp proto tcp from any to any flags A/A
+block drop in quick on $isp proto tcp from any to any flags R/R
+### SEC_NONSYN_END ###
+
+#Block all traffic with a spoofed source IP-address from the network directly connected to the specified NIC from entering the system through any other NIC
+antispoof quick for { $isp lo0 }
+
+##################
+#INPUT rules     #
+##################
+#[WAN <- Martians & blacklisted IP-addresses]
+#Block packets from wrong address ranges and blacklisted IPs
+block drop in quick on $isp from {<martians>, <blacklist>} to any
+
+### SEC_CONNLIMIT_START ###
+# Connection limiting per source IP
+pass in on $isp proto tcp from any to any flags S/SA \
+    keep state (max-src-conn PF_CONNLIMIT_PER_IP, \
+    max-src-conn-rate PF_SCANNER_CONN_RATE/5, \
+    overload <port_scanners> flush global)
+### SEC_CONNLIMIT_END ###
+
+### SEC_UDP_FLOOD_START ###
+# UDP flood protection - rate limit per source IP
+pass in on $isp proto udp from any to any \
+    keep state (max-src-conn-rate PF_UDP_RATE_LIMIT/1)
+### SEC_UDP_FLOOD_END ###
+
+### LAN_START ###
+#[LAN <-> LAN]
+#Client isolation: Block LAN clients from communicating with each other
+#Allow LAN to gateway (firewall) for DNS, DHCP, management
+pass in on $lan proto { tcp udp } from $lan:network to $lan:0
+#Block LAN-to-LAN traffic (client isolation)
+block drop in quick on $lan from $lan:network to $lan:network
+#Allow LAN to WAN (internet access - handled by NAT rules below)
+pass in on $lan from $lan:network
+### LAN_END ###
+
+#[Management NIC <> Management]
+#Allow SSH to the firewall only through port 22 with brute-force protection
+#block drop in quick on $management from <bruteforce> to any
+#pass in on $management proto tcp from $management:network to $management port 22 flags S/SA keep state (max-src-conn 100, max-src-conn-rate 15/5, overload <bruteforce> flush global)
+
+# Protect against spoofing
+### LAN_START ###
+antispoof quick for { lo $lan }
+### LAN_END ###
+### NO_LAN_START ###
+#antispoof quick for { lo }
+### NO_LAN_END ###
+
+##################
+#OUTPUT rules    #
+##################
+#[WAN -> Martians & blacklisted IPs]
+#Do not sent RFC1918 IP-addresses over the WAN and do not access blacklisted IP-addresses
+block drop out quick on $isp from any to {<martians>, <blacklist>}
+
+#Allow traffic from the edge firewall WAN interface to route to the WAN for ping, nslookup and system updates
+#[(WAN) Firewall -> WAN]
+### NO_LAN_START ###
+#pass out on $isp proto { tcp udp icmp } from $isp:network to any
+### NO_LAN_END ###
+
+##################
+#NAT             #
+##################
+### LAN_START ###
+#[LAN <-> WAN]
+#Perform NAT on the WAN interface for any packet coming from the LAN and replace the source IP address with the WAN gateway
+
+#UDP
+pass out proto udp from $lan:network to any port $nat_udp_ports nat-to $isp keep state
+#TCP
+pass out proto tcp from $lan:network to any port $nat_tcp_ports nat-to $isp modulate state
+#ICMP (protocol used for ping)
+pass out proto icmp all icmp-type $icmp_types nat-to $isp keep state
+#WARNING: This line allows sessions from any port the WAN. Enable this line only for troubleshooting purposes
+#pass out from $lan:network to any nat-to $isp keep state
+### LAN_END ###
