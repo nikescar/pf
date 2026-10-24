@@ -5,3 +5,4 @@ tmp/
 ip2asn*
 inbound.txt
 outbound.txt
+blocklist.bak*
