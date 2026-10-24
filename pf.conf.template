@@ -43,6 +43,9 @@ table <bruteforce> persist
 #Skip any packet filtering on the localhost interface
 set skip on lo0
 
+#Increase table size limit for large blocklists (default: 200000)
+set limit table-entries 2000000
+
 #Drop all other traffic traffic unless it is whitelisted. PF automatically appends "keep state flags S/SA"
 block drop all
 

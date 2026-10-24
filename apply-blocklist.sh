@@ -250,7 +250,7 @@ if [ "$ENTRY_COUNT" -gt 50000 ]; then
         CHUNK_NUM=$((CHUNK_NUM + 1))
         CHUNK_SIZE=$(wc -l < "$chunk" | tr -d ' ')
         printf "  [%d/%d] Loading %d entries... " "$CHUNK_NUM" "$TOTAL_CHUNKS" "$CHUNK_SIZE"
-        if pfctl -t blocklist -T add -f "$chunk" 2>&1 | grep -v "^$"; then
+        if ! pfctl -t blocklist -T add -f "$chunk" >/dev/null 2>&1; then
             echo "✗ Failed"
             exit 1
         fi
