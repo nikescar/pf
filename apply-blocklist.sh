@@ -6,10 +6,22 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
+APPNAME="apply-blocklist"
+
+# RFC 5424 syslog-style logging
+log() {
+    local level="$1"
+    shift
+    printf "%s %s %s: %s\n" "$(date +%Y-%m-%dT%H:%M:%S)" "$level" "$APPNAME" "$*"
+}
+
+log_info() { log "INFO" "$@"; }
+log_warn() { log "WARN" "$@"; }
+log_error() { log "ERROR" "$@"; }
 
 # Load configuration
 if [ ! -f "$ENV_FILE" ]; then
-    echo "ERROR: $ENV_FILE not found"
+    log_error "$ENV_FILE not found"
     exit 1
 fi
 
@@ -20,7 +32,8 @@ set +a
 # Files
 BLOCKLIST_FILE="$SCRIPT_DIR/blocklist"
 BLOCKLIST_INFO="$SCRIPT_DIR/blocklist.info.txt"
-BACKUP_FILE="$SCRIPT_DIR/blocklist.$(date +%Y%m%d-%H%M%S)"
+BACKUP_FILE="$SCRIPT_DIR/blocklist.bak"
+BACKUP_INFO="$SCRIPT_DIR/blocklist.info.txt.bak"
 PF_CONF="${PF_OUTPUT_FILE:-/etc/pf.conf}"
 
 # Temp files
@@ -65,13 +78,11 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-echo "=== PF Blocklist Applier ==="
-echo ""
+log_info "Starting PF blocklist application"
 
 # Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
-    echo "ERROR: This script must be run as root (use doas)"
-    echo "Usage: doas $0"
+    log_error "This script must be run as root (use doas)"
     exit 1
 fi
 
@@ -79,8 +90,8 @@ fi
 if [ $LOCAL_ONLY -eq 0 ]; then
     # Check if repo URL is configured
     if [ -z "$PF_BLOCKLIST_REPO_URL" ] || [ "$PF_BLOCKLIST_REPO_URL" = "https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main" ]; then
-        echo "ERROR: PF_BLOCKLIST_REPO_URL not configured in .env"
-        echo "Set it to: https://raw.githubusercontent.com/USER/REPO/BRANCH"
+        log_error "PF_BLOCKLIST_REPO_URL not configured in .env"
+        log_error "Set it to: https://raw.githubusercontent.com/USER/REPO/BRANCH"
         exit 1
     fi
 
@@ -89,10 +100,10 @@ if [ $LOCAL_ONLY -eq 0 ]; then
     BLOCKLIST_INFO_URL="${PF_BLOCKLIST_REPO_URL}/blocklist.info.txt"
 
     # Download remote blocklist
-    echo "Downloading blocklist from GitHub..."
+    log_info "Downloading blocklist from GitHub"
     if ! curl -fsSL "$BLOCKLIST_URL" -o "$TEMP_DIR/blocklist.remote" 2>/dev/null; then
-        echo "ERROR: Failed to download blocklist from $BLOCKLIST_URL"
-        echo "Check PF_BLOCKLIST_REPO_URL in .env"
+        log_error "Failed to download blocklist from $BLOCKLIST_URL"
+        log_error "Check PF_BLOCKLIST_REPO_URL in .env"
         exit 1
     fi
 
@@ -107,9 +118,9 @@ if [ $LOCAL_ONLY -eq 0 ]; then
     fi
 else
     # Local-only mode: use existing blocklist
-    echo "Local-only mode: using existing blocklist"
+    log_info "Local-only mode: using existing blocklist"
     if [ ! -f "$BLOCKLIST_FILE" ]; then
-        echo "ERROR: Blocklist file not found: $BLOCKLIST_FILE"
+        log_error "Blocklist file not found: $BLOCKLIST_FILE"
         exit 1
     fi
     # Set hashes to force reload
@@ -119,24 +130,23 @@ fi
 
 # Dry run mode
 if [ $DRY_RUN -eq 1 ]; then
-    echo "Comparing local and remote blocklists..."
+    log_info "Comparing local and remote blocklists"
     if [ "$LOCAL_HASH" = "$REMOTE_HASH" ]; then
-        echo "  No changes - blocklist is up to date"
+        log_info "No changes - blocklist is up to date"
     else
-        echo "  Changes detected:"
+        log_info "Changes detected"
         LOCAL_COUNT=0
         if [ -f "$BLOCKLIST_FILE" ]; then
             LOCAL_COUNT=$(wc -l < "$BLOCKLIST_FILE" | tr -d ' ')
         fi
         REMOTE_COUNT=$(wc -l < "$TEMP_DIR/blocklist.remote" | tr -d ' ')
-        echo "    Local entries:  $LOCAL_COUNT"
-        echo "    Remote entries: $REMOTE_COUNT"
-        echo "    Difference:     $(($REMOTE_COUNT - $LOCAL_COUNT))"
+        log_info "Local entries: $LOCAL_COUNT"
+        log_info "Remote entries: $REMOTE_COUNT"
+        log_info "Difference: $(($REMOTE_COUNT - $LOCAL_COUNT))"
 
         # Show sample of changes
         if [ -f "$BLOCKLIST_FILE" ]; then
-            echo ""
-            echo "  Sample changes (first 10):"
+            log_info "Sample changes (first 10):"
             diff "$BLOCKLIST_FILE" "$TEMP_DIR/blocklist.remote" | grep '^[<>]' | head -10 || true
         fi
     fi
@@ -145,30 +155,30 @@ fi
 
 # Check if changed
 if [ "$LOCAL_HASH" = "$REMOTE_HASH" ] && [ $FORCE -eq 0 ]; then
-    echo "✓ Blocklist is up to date (no changes)"
+    log_info "Blocklist is up to date (no changes)"
     exit 0
 fi
 
 # Blocklist changed or forced
 if [ $LOCAL_ONLY -eq 1 ]; then
-    echo "✓ Using local blocklist"
+    log_info "Using local blocklist"
 elif [ $FORCE -eq 1 ]; then
-    echo "Force update requested"
+    log_info "Force update requested"
 else
-    echo "✓ Blocklist has updates"
+    log_info "Blocklist has updates"
 fi
 
 # Download mode: backup and install
 if [ $LOCAL_ONLY -eq 0 ]; then
     # Backup current blocklist
     if [ -f "$BLOCKLIST_FILE" ]; then
-        echo "Backing up current blocklist: $BACKUP_FILE"
+        log_info "Backing up current blocklist to: $BACKUP_FILE"
         cp "$BLOCKLIST_FILE" "$BACKUP_FILE"
     fi
 
     # Backup current info file
     if [ -f "$BLOCKLIST_INFO" ]; then
-        cp "$BLOCKLIST_INFO" "${BACKUP_FILE}.info.txt"
+        cp "$BLOCKLIST_INFO" "$BACKUP_INFO"
     fi
 
     # Install new blocklist
@@ -180,61 +190,57 @@ fi
 
 # Show summary
 ENTRY_COUNT=$(wc -l < "$BLOCKLIST_FILE" | tr -d ' ')
-echo "  Entries: $ENTRY_COUNT"
+log_info "Total entries: $ENTRY_COUNT"
 
 if [ -f "$BLOCKLIST_INFO" ]; then
-    echo ""
-    echo "Recent additions (from blocklist.info.txt):"
+    log_info "Recent additions (from blocklist.info.txt):"
     head -5 "$BLOCKLIST_INFO" || true
 fi
 
 # Reload PF if not check-only mode
 if [ $CHECK_ONLY -eq 1 ]; then
-    echo ""
-    echo "✓ Check-only mode: PF not reloaded"
-    echo "  To apply: pfctl -f $PF_CONF && pfctl -t blocklist -T replace -f $BLOCKLIST_FILE"
+    log_info "Check-only mode: PF not reloaded"
+    log_info "To apply: pfctl -f $PF_CONF && pfctl -t blocklist -T replace -f $BLOCKLIST_FILE"
     exit 0
 fi
 
 # Validate PF config before reloading
-echo ""
-echo "Validating PF configuration..."
+log_info "Validating PF configuration"
 if ! pfctl -nvf "$PF_CONF" >/dev/null 2>&1; then
-    echo "✗ PF config validation failed"
+    log_error "PF config validation failed"
     pfctl -nvf "$PF_CONF" 2>&1
-    echo ""
-    echo "Restoring backup..."
+    log_info "Restoring backup"
     [ -f "$BACKUP_FILE" ] && mv "$BACKUP_FILE" "$BLOCKLIST_FILE"
     exit 1
 fi
 
-echo "✓ PF config valid"
+log_info "PF configuration valid"
 
 # Reload PF rules
-echo "Reloading PF rules..."
+log_info "Reloading PF rules"
 if pfctl -f "$PF_CONF" 2>&1; then
-    echo "✓ PF rules reloaded successfully"
+    log_info "PF rules reloaded successfully"
 else
-    echo "✗ Failed to reload PF rules"
-    echo "Restoring backup..."
+    log_error "Failed to reload PF rules"
+    log_info "Restoring backup"
     [ -f "$BACKUP_FILE" ] && mv "$BACKUP_FILE" "$BLOCKLIST_FILE"
     exit 1
 fi
 
 # Ensure blocklist table exists before loading
-echo "Ensuring blocklist table exists..."
+log_info "Ensuring blocklist table exists"
 if ! pfctl -t blocklist -T show >/dev/null 2>&1; then
-    echo "  Creating blocklist table..."
+    log_info "Creating blocklist table"
     pfctl -t blocklist -T add 2>/dev/null || true
 fi
 
 # Explicitly load blocklist table with chunked loading for large files
-echo "Loading blocklist table..."
+log_info "Loading blocklist table"
 ENTRY_COUNT=$(wc -l < "$BLOCKLIST_FILE" | tr -d ' ')
-echo "  Entries to load: $ENTRY_COUNT"
+log_info "Entries to load: $ENTRY_COUNT"
 
 if [ "$ENTRY_COUNT" -gt 50000 ]; then
-    echo "  Using chunked loading (large blocklist)..."
+    log_info "Using chunked loading (large blocklist)"
     # Split into 10k chunks (memory-friendly)
     split -l 10000 "$BLOCKLIST_FILE" "$TEMP_DIR/chunk."
 
@@ -249,29 +255,26 @@ if [ "$ENTRY_COUNT" -gt 50000 ]; then
     for chunk in "$TEMP_DIR"/chunk.*; do
         CHUNK_NUM=$((CHUNK_NUM + 1))
         CHUNK_SIZE=$(wc -l < "$chunk" | tr -d ' ')
-        printf "  [%d/%d] Loading %d entries... " "$CHUNK_NUM" "$TOTAL_CHUNKS" "$CHUNK_SIZE"
-        if pfctl -t blocklist -T add -f "$chunk" 2>&1 | grep -v "^$"; then
-            echo "✗ Failed"
+        log_info "Loading chunk $CHUNK_NUM/$TOTAL_CHUNKS ($CHUNK_SIZE entries)"
+        if ! pfctl -t blocklist -T add -f "$chunk" >/dev/null 2>&1; then
+            log_error "Failed to load chunk $CHUNK_NUM"
             exit 1
         fi
-        echo "✓"
     done
-    echo "✓ Blocklist table loaded (chunked)"
+    log_info "Blocklist table loaded (chunked)"
 else
     # Small blocklist, load directly
     if pfctl -t blocklist -T replace -f "$BLOCKLIST_FILE" 2>&1; then
-        echo "✓ Blocklist table loaded"
+        log_info "Blocklist table loaded"
     else
-        echo "✗ Failed to load blocklist table"
+        log_error "Failed to load blocklist table"
         exit 1
     fi
 fi
 
 # Show blocklist table stats
-echo ""
-echo "Blocklist table status:"
+log_info "Blocklist table status:"
 BLOCKLIST_COUNT=$(pfctl -t blocklist -T show 2>/dev/null | wc -l | tr -d ' ')
-echo "  Loaded entries: $BLOCKLIST_COUNT"
+log_info "Loaded entries: $BLOCKLIST_COUNT"
 
-echo ""
-echo "=== Blocklist applied successfully ==="
+log_info "Blocklist applied successfully"

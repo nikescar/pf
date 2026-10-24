@@ -28,6 +28,9 @@ pfctl -t blocklist -T show | wc -l
 - **PF_DROP_INVALID_STATE** - Drop malformed packets (1=enabled)
 - **PF_GUARD_UDP_FLOOD** - Rate limit UDP (1=enabled)
 - **PF_GUARD_PORT_SCANNER** - Block port scanners (1=enabled)
+- **PF_BLOCKLIST_MODE** - Blocklist mode: `ip` (default) or `asn`
+  - `ip`: Block individual IPs, auto-aggregate to /24 if >100k entries
+  - `asn`: Convert IPs to ASN network ranges (slower, larger coverage)
 
 See `.env.example` for all options.
 

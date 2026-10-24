@@ -6,10 +6,22 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
+APPNAME="update-blocklist"
+
+# RFC 5424 syslog-style logging
+log() {
+    local level="$1"
+    shift
+    printf "%s %s %s: %s\n" "$(date +%Y-%m-%dT%H:%M:%S)" "$level" "$APPNAME" "$*"
+}
+
+log_info() { log "INFO" "$@"; }
+log_warn() { log "WARN" "$@"; }
+log_error() { log "ERROR" "$@"; }
 
 # Load configuration
 if [ ! -f "$ENV_FILE" ]; then
-    echo "ERROR: $ENV_FILE not found"
+    log_error "$ENV_FILE not found"
     exit 1
 fi
 
@@ -17,20 +29,29 @@ set -a
 . "$ENV_FILE"
 set +a
 
+# Validate blocklist mode
+BLOCKLIST_MODE="${PF_BLOCKLIST_MODE:-ip}"
+if [ "$BLOCKLIST_MODE" != "ip" ] && [ "$BLOCKLIST_MODE" != "asn" ]; then
+    log_error "PF_BLOCKLIST_MODE must be 'ip' or 'asn' (got: $BLOCKLIST_MODE)"
+    exit 1
+fi
+
+log_info "Blocklist mode: $BLOCKLIST_MODE"
+
 # Files
 IP2ASN_CACHE="$SCRIPT_DIR/ip2asn-v4.tsv"
 IP2ASN_INT_CACHE="$SCRIPT_DIR/ip2asn-v4-int.tsv"
 INBOUND_CACHE="$SCRIPT_DIR/inbound.txt"
 OUTBOUND_CACHE="$SCRIPT_DIR/outbound.txt"
 BLOCKLIST_FILE="$SCRIPT_DIR/blocklist"
-BACKUP_FILE="$SCRIPT_DIR/blocklist.$(date +%Y%m%d)"
+BACKUP_FILE="$SCRIPT_DIR/blocklist.bak"
 PF_CONF="${PF_OUTPUT_FILE:-/etc/pf.conf}"
 
 # Temp files
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
-echo "[$(date)] Starting blocklist update..."
+log_info "Starting blocklist update"
 
 #
 # Function: Download and cache ip2asn database
@@ -48,25 +69,25 @@ download_ip2asn() {
     fi
 
     if [ $needs_download -eq 1 ]; then
-        echo "Downloading ip2asn database (~50MB compressed)..."
+        log_info "Downloading ip2asn database (~50MB compressed)"
         curl -sL "$PF_IP2ASN_URL" | gunzip > "$IP2ASN_CACHE.tmp"
 
         if [ -s "$IP2ASN_CACHE.tmp" ]; then
             mv "$IP2ASN_CACHE.tmp" "$IP2ASN_CACHE"
-            echo "Downloaded $(wc -l < "$IP2ASN_CACHE" | tr -d ' ') IP range entries"
+            log_info "Downloaded $(wc -l < "$IP2ASN_CACHE" | tr -d ' ') IP range entries"
         else
-            echo "ERROR: Failed to download ip2asn database"
+            log_error "Failed to download ip2asn database"
             rm -f "$IP2ASN_CACHE.tmp"
             exit 1
         fi
     else
         local days_old=$(( cache_age / 86400 ))
-        echo "Using cached ip2asn database (${days_old} days old)"
+        log_info "Using cached ip2asn database (${days_old} days old)"
     fi
 
     # Generate integer cache if missing
     if [ ! -f "$IP2ASN_INT_CACHE" ]; then
-        echo "Converting to integer format..."
+        log_info "Converting to integer format"
         awk '{
             split($1, s, ".");
             split($2, e, ".");
@@ -74,7 +95,7 @@ download_ip2asn() {
             end = (e[1] * 16777216) + (e[2] * 65536) + (e[3] * 256) + e[4];
             print start, end, $1, $2;
         }' "$IP2ASN_CACHE" > "$IP2ASN_INT_CACHE"
-        echo "Conversion complete"
+        log_info "Conversion complete"
     fi
 }
 
@@ -97,7 +118,7 @@ download_ip_lists() {
 
     # Download if needed
     if [ $needs_download -eq 1 ]; then
-        echo "Downloading IP lists..."
+        log_info "Downloading IP lists"
         curl -sL "$PF_BLOCKLIST_INBOUND_URL" > "$INBOUND_CACHE.tmp"
         curl -sL "$PF_BLOCKLIST_OUTBOUND_URL" > "$OUTBOUND_CACHE.tmp"
 
@@ -105,13 +126,13 @@ download_ip_lists() {
             mv "$INBOUND_CACHE.tmp" "$INBOUND_CACHE"
             mv "$OUTBOUND_CACHE.tmp" "$OUTBOUND_CACHE"
         else
-            echo "ERROR: Failed to download IP lists"
+            log_error "Failed to download IP lists"
             rm -f "$INBOUND_CACHE.tmp" "$OUTBOUND_CACHE.tmp"
             exit 1
         fi
     else
         local days_old=$(( cache_age / 86400 ))
-        echo "Using cached IP lists (${days_old} days old)"
+        log_info "Using cached IP lists (${days_old} days old)"
     fi
 
     # Combine and deduplicate
@@ -120,10 +141,10 @@ download_ip_lists() {
         sort -u > "$TEMP_DIR/ip_list.txt"
 
     local ip_count=$(wc -l < "$TEMP_DIR/ip_list.txt" | tr -d ' ')
-    echo "Processing $ip_count unique IPs"
+    log_info "Processing $ip_count unique IPs"
 
     if [ "$ip_count" -eq 0 ]; then
-        echo "ERROR: No valid IPs found"
+        log_error "No valid IPs found"
         exit 1
     fi
 }
@@ -144,10 +165,10 @@ EOF
 # Function: Find ranges using merge-join (O(n+m) instead of O(n*m))
 #
 find_ranges() {
-    echo "Finding IP ranges (optimized merge-join)..."
+    log_info "Finding IP ranges (optimized merge-join)"
 
     # Convert all IPs to integers
-    echo "Converting IPs to integers..."
+    log_info "Converting IPs to integers"
     awk '{
         split($1, p, ".");
         ip_int = (p[1] * 16777216) + (p[2] * 65536) + (p[3] * 256) + p[4];
@@ -155,7 +176,7 @@ find_ranges() {
     }' "$TEMP_DIR/ip_list.txt" | sort -n > "$TEMP_DIR/ip_list_int.txt"
 
     # Merge-join sorted IPs with sorted ip2asn ranges
-    echo "Matching IPs to ranges..."
+    log_info "Matching IPs to ranges"
     awk '
     NR == FNR {
         # Load ip2asn cache (already sorted by start IP)
@@ -184,10 +205,10 @@ find_ranges() {
         sort -u > "$TEMP_DIR/ip_ranges.txt"
 
     local range_count=$(wc -l < "$TEMP_DIR/ip_ranges.txt" | tr -d ' ')
-    echo "Found $range_count unique IP ranges"
+    log_info "Found $range_count unique IP ranges"
 
     if [ "$range_count" -eq 0 ]; then
-        echo "ERROR: No IP ranges found"
+        log_error "No IP ranges found"
         exit 1
     fi
 }
@@ -196,7 +217,7 @@ find_ranges() {
 # Function: Create metadata for each IP range
 #
 create_metadata() {
-    echo "Generating metadata for IP ranges..."
+    log_info "Generating metadata for IP ranges"
 
     awk '
     NR == FNR {
@@ -223,7 +244,7 @@ create_metadata() {
     ' "$IP2ASN_CACHE" "$TEMP_DIR/ip_ranges.txt" > "$TEMP_DIR/ip_metadata.txt"
 
     local meta_count=$(wc -l < "$TEMP_DIR/ip_metadata.txt" | tr -d ' ')
-    echo "Generated metadata for $meta_count ranges"
+    log_info "Generated metadata for $meta_count ranges"
 }
 
 #
@@ -254,7 +275,7 @@ range_to_cidr() {
 # Function: Convert all ranges to CIDR notation
 #
 convert_to_cidr() {
-    echo "Converting IP ranges to CIDR notation with metadata..."
+    log_info "Converting IP ranges to CIDR notation with metadata"
 
     # Process all ranges with awk (much faster than shell loop)
     awk '
@@ -314,14 +335,14 @@ convert_to_cidr() {
         "$TEMP_DIR/combined_all.txt" > "$TEMP_DIR/combined_filtered.txt"
 
     local filtered_count=$(wc -l < "$TEMP_DIR/combined_filtered.txt" | tr -d ' ')
-    echo "Generated $filtered_count unique CIDR blocks with metadata (before whitelist filter)"
+    log_info "Generated $filtered_count unique CIDR blocks with metadata (before whitelist filter)"
 }
 
 #
 # Function: Finalize blocklist (sort and split)
 #
 finalize_blocklist() {
-    echo "Finalizing blocklist..."
+    log_info "Finalizing blocklist"
 
     # Sort by CIDR and remove duplicates
     sort -u -k1,1 "$TEMP_DIR/combined_filtered.txt" > "$TEMP_DIR/combined_sorted.txt"
@@ -331,10 +352,10 @@ finalize_blocklist() {
     awk -F'\t' '{print $2}' "$TEMP_DIR/combined_sorted.txt" > "$TEMP_DIR/info_final.txt"
 
     local final_count=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
-    echo "Final blocklist: $final_count entries"
+    log_info "Final blocklist: $final_count entries"
 
     if [ "$final_count" -eq 0 ]; then
-        echo "ERROR: Final blocklist is empty"
+        log_error "Final blocklist is empty"
         exit 1
     fi
 }
@@ -343,11 +364,11 @@ finalize_blocklist() {
 # Function: Filter whitelisted ranges
 #
 filter_whitelist() {
-    echo "Filtering whitelisted ranges..."
+    log_info "Filtering whitelisted ranges"
 
     # Check if whitelist is defined
     if [ -z "$PF_WHITELIST_RANGES" ]; then
-        echo "No whitelist defined, skipping filter"
+        log_info "No whitelist defined, skipping filter"
         return
     fi
 
@@ -355,7 +376,7 @@ filter_whitelist() {
     echo "$PF_WHITELIST_RANGES" | tr ' ' '\n' > "$TEMP_DIR/whitelist.txt"
 
     local whitelist_count=$(wc -l < "$TEMP_DIR/whitelist.txt" | tr -d ' ')
-    echo "Whitelist entries: $whitelist_count"
+    log_info "Whitelist entries: $whitelist_count"
 
     # Filter using awk to check CIDR overlap
     awk '
@@ -462,10 +483,75 @@ filter_whitelist() {
     local after=$(wc -l < "$TEMP_DIR/combined_whitelist_filtered.txt" | tr -d ' ')
     local removed=$((before - after))
 
-    echo "Removed $removed whitelisted ranges (${before} -> ${after})"
+    log_info "Removed $removed whitelisted ranges (${before} -> ${after})"
 
     # Replace filtered file
     mv "$TEMP_DIR/combined_whitelist_filtered.txt" "$TEMP_DIR/combined_filtered.txt"
+}
+
+#
+# Function: Process IP mode with /24 aggregation
+#
+process_ip_mode() {
+    log_info "Processing IP mode"
+
+    local ip_count=$(wc -l < "$TEMP_DIR/ip_list.txt" | tr -d ' ')
+
+    if [ "$ip_count" -gt 100000 ]; then
+        log_info "IP count ($ip_count) exceeds 100k threshold"
+        log_info "Aggregating to /24 subnets"
+
+        # Extract first 3 octets, deduplicate, convert to /24 CIDR
+        awk -F. '{print $1"."$2"."$3".0/24"}' "$TEMP_DIR/ip_list.txt" | \
+            sort -u > "$TEMP_DIR/blocklist_final.txt"
+
+        local subnet_count=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
+        log_info "Aggregated $ip_count IPs to $subnet_count /24 subnets"
+    else
+        log_info "Using raw IP list ($ip_count entries)"
+        cp "$TEMP_DIR/ip_list.txt" "$TEMP_DIR/blocklist_final.txt"
+    fi
+
+    # Filter private IPs
+    log_info "Filtering private IP ranges"
+    grep -Ev "^192\.168\.|^10\.|^172\.(1[6-9]|2[0-9]|3[01])\.|^127\.|^0\.|^169\.254\." \
+        "$TEMP_DIR/blocklist_final.txt" > "$TEMP_DIR/blocklist_filtered.txt" || true
+
+    # Apply whitelist filter if configured
+    if [ -n "$PF_WHITELIST_RANGES" ]; then
+        log_info "Filtering whitelisted ranges"
+
+        # Create whitelist file
+        echo "$PF_WHITELIST_RANGES" | tr ' ' '\n' > "$TEMP_DIR/whitelist.txt"
+
+        # Simple prefix matching for whitelist (faster than full CIDR overlap)
+        local before=$(wc -l < "$TEMP_DIR/blocklist_filtered.txt" | tr -d ' ')
+
+        # Filter out whitelist entries
+        grep -vFf "$TEMP_DIR/whitelist.txt" "$TEMP_DIR/blocklist_filtered.txt" \
+            > "$TEMP_DIR/blocklist_final.txt" || cp "$TEMP_DIR/blocklist_filtered.txt" "$TEMP_DIR/blocklist_final.txt"
+
+        local after=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
+        local removed=$((before - after))
+        log_info "Removed $removed whitelisted entries (${before} -> ${after})"
+    else
+        mv "$TEMP_DIR/blocklist_filtered.txt" "$TEMP_DIR/blocklist_final.txt"
+    fi
+
+    local final_count=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
+    log_info "Final blocklist: $final_count entries"
+
+    if [ "$final_count" -eq 0 ]; then
+        log_error "Final blocklist is empty"
+        exit 1
+    fi
+
+    # Create minimal info file for IP mode
+    echo "# IP mode blocklist (no ASN metadata)" > "$TEMP_DIR/info_final.txt"
+    echo "# Generated: $(date)" >> "$TEMP_DIR/info_final.txt"
+    echo "# Total entries: $final_count" >> "$TEMP_DIR/info_final.txt"
+
+    log_info "IP mode processing complete"
 }
 
 #
@@ -475,7 +561,7 @@ filter_whitelist() {
 # Backup existing blocklist
 if [ -f "$BLOCKLIST_FILE" ]; then
     cp "$BLOCKLIST_FILE" "$BACKUP_FILE"
-    echo "Backed up to $BACKUP_FILE"
+    log_info "Backed up existing blocklist to $BACKUP_FILE"
 fi
 
 # Backup existing info file
@@ -483,64 +569,70 @@ if [ -f "${BLOCKLIST_FILE}.info.txt" ]; then
     cp "${BLOCKLIST_FILE}.info.txt" "${BACKUP_FILE}.info.txt"
 fi
 
-# Download and cache ip2asn database
-download_ip2asn
-
-# Download sample IP lists
+# Download IP lists
 download_ip_lists
 
-# Find IP ranges for sample IPs
-find_ranges
+# Process based on blocklist mode
+if [ "$BLOCKLIST_MODE" = "asn" ]; then
+    log_info "Using ASN mode (convert IPs to network ranges)"
 
-# Generate metadata for ranges
-create_metadata
+    # Download and cache ip2asn database
+    download_ip2asn
 
-# Convert to CIDR
-convert_to_cidr
+    # Find IP ranges for sample IPs
+    find_ranges
 
-# Filter whitelisted ranges
-filter_whitelist
+    # Generate metadata for ranges
+    create_metadata
 
-# Finalize blocklist (sort and split after whitelist filter)
-finalize_blocklist
+    # Convert to CIDR
+    convert_to_cidr
+
+    # Filter whitelisted ranges
+    filter_whitelist
+
+    # Finalize blocklist (sort and split after whitelist filter)
+    finalize_blocklist
+else
+    log_info "Using IP mode (direct IP blocking with /24 aggregation if needed)"
+
+    # Process IP mode with aggregation
+    process_ip_mode
+fi
 
 # Deploy new blocklist and info file
 mv "$TEMP_DIR/blocklist_final.txt" "$BLOCKLIST_FILE"
 mv "$TEMP_DIR/info_final.txt" "${BLOCKLIST_FILE}.info.txt"
-echo "Deployed to $BLOCKLIST_FILE and ${BLOCKLIST_FILE}.info.txt"
+log_info "Deployed to $BLOCKLIST_FILE and ${BLOCKLIST_FILE}.info.txt"
 
 # CI mode: skip PF operations
 if [ -n "$CI" ]; then
-    echo "[CI] Blocklist generated successfully: $BLOCKLIST_FILE"
-    echo "[CI] Skipping PF validation and reload"
+    log_info "CI mode: Blocklist generated successfully: $BLOCKLIST_FILE"
+    log_info "CI mode: Skipping PF validation and reload"
     exit 0
 fi
 
 # Use apply-blocklist.sh to load the blocklist
-echo "Loading blocklist via apply-blocklist.sh..."
+log_info "Loading blocklist via apply-blocklist.sh"
 if [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
     if "$SCRIPT_DIR/apply-blocklist.sh" --local-only --force; then
-        echo "✓ Blocklist loaded successfully"
+        log_info "Blocklist loaded successfully"
     else
-        echo "✗ Failed to load blocklist"
+        log_error "Failed to load blocklist"
         mv "$BACKUP_FILE" "$BLOCKLIST_FILE" 2>/dev/null || true
         exit 1
     fi
 else
-    echo "WARNING: apply-blocklist.sh not found, using fallback method"
-    echo "Validating PF config..."
+    log_warn "apply-blocklist.sh not found, using fallback method"
+    log_info "Validating PF config"
     if ! pfctl -nvf "$PF_CONF" >/dev/null 2>&1; then
-        echo "ERROR: PF config validation failed"
+        log_error "PF config validation failed"
         mv "$BACKUP_FILE" "$BLOCKLIST_FILE" 2>/dev/null || true
         exit 1
     fi
-    echo "Reloading PF rules..."
+    log_info "Reloading PF rules"
     pfctl -f "$PF_CONF"
-    echo "Note: Install apply-blocklist.sh for better table loading"
+    log_warn "Install apply-blocklist.sh for better table loading"
 fi
 
-# Cleanup old backups (keep last 5)
-ls -t "$SCRIPT_DIR"/blocklist.2* 2>/dev/null | grep -v '\.info\.txt$' | tail -n +6 | xargs rm -f 2>/dev/null || true
-ls -t "$SCRIPT_DIR"/blocklist.2*.info.txt 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
-
-echo "[$(date)] Blocklist update complete."
+log_info "Blocklist update complete"

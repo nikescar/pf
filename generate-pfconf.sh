@@ -1,16 +1,28 @@
 #!/bin/sh
 # Generate /etc/pf.conf based on .env configuration
-# Usage: ./gen-pf-conf.sh [--check-only]
+# Usage: ./generate-pfconf.sh [--check-only]
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE="$SCRIPT_DIR/pf.conf.template"
 ENV_FILE="$SCRIPT_DIR/.env"
+APPNAME="generate-pfconf"
+
+# RFC 5424 syslog-style logging
+log() {
+    local level="$1"
+    shift
+    printf "%s %s %s: %s\n" "$(date +%Y-%m-%dT%H:%M:%S)" "$level" "$APPNAME" "$*"
+}
+
+log_info() { log "INFO" "$@"; }
+log_warn() { log "WARN" "$@"; }
+log_error() { log "ERROR" "$@"; }
 
 # Load .env configuration
 if [ ! -f "$ENV_FILE" ]; then
-    echo "ERROR: $ENV_FILE not found. Copy .env.example to .env"
+    log_error "$ENV_FILE not found. Copy .env.example to .env"
     exit 1
 fi
 
@@ -21,44 +33,39 @@ set +a
 
 # Use PF_OUTPUT_FILE from .env, default to /etc/pf.conf if not set
 OUTPUT="${PF_OUTPUT_FILE:-/etc/pf.conf}"
-BACKUP="${OUTPUT}.bak.$(date +%Y%m%d-%H%M%S)"
+BACKUP="${OUTPUT}.bak"
 
-echo "=== PF Config Generator ==="
-echo ""
+log_info "Starting PF configuration generation"
 
 # Display configuration
-echo "Configuration:"
-echo "  Output file: $OUTPUT"
-echo "  ISP interface: $PF_ISP_INTERFACE"
-echo "  LAN interface: $PF_LAN_INTERFACE"
-echo "  LAN enabled: $PF_LAN_ENABLED"
-echo ""
+log_info "Output file: $OUTPUT"
+log_info "ISP interface: $PF_ISP_INTERFACE"
+log_info "LAN interface: $PF_LAN_INTERFACE"
+log_info "LAN enabled: $PF_LAN_ENABLED"
 
 # Check-only mode
 if [ "$1" = "--check-only" ]; then
-    echo "Check-only mode. Configuration loaded successfully."
+    log_info "Check-only mode. Configuration loaded successfully"
     exit 0
 fi
 
 # Determine mode
 if [ "$PF_LAN_ENABLED" -eq 1 ]; then
     MODE="WITH_LAN"
-    echo "Mode: Router (ISP + LAN)"
+    log_info "Mode: Router (ISP + LAN)"
 else
     MODE="NO_LAN"
-    echo "Mode: Single interface (ISP only)"
+    log_info "Mode: Single interface (ISP only)"
 fi
-
-echo ""
 
 # Backup existing config
 if [ -f "$OUTPUT" ]; then
-    echo "Backing up: $BACKUP"
+    log_info "Backing up existing config to: $BACKUP"
     cp "$OUTPUT" "$BACKUP"
 fi
 
 # Generate config
-echo "Generating /etc/pf.conf..."
+log_info "Generating configuration from template"
 
 # Start with template
 TMP_FILE=$(mktemp)
@@ -118,38 +125,51 @@ sed -i '/^### SEC_.*_END ###/d' "$TMP_FILE"
 mv "$TMP_FILE" "$OUTPUT"
 
 # Validate
-echo ""
-echo "Validating..."
+log_info "Validating configuration syntax"
 if pfctl -nvf "$OUTPUT" 2>&1 | grep -q "syntax error"; then
-    echo "✗ Syntax error - restoring backup"
+    log_error "Syntax validation failed - restoring backup"
     pfctl -nvf "$OUTPUT" 2>&1 | grep "syntax error"
     [ -f "$BACKUP" ] && mv "$BACKUP" "$OUTPUT"
     exit 1
 else
-    echo "✓ Valid"
+    log_info "Configuration syntax valid"
 fi
 
-echo ""
-echo "=== Generated: $OUTPUT ==="
-echo ""
-echo "Security rules enabled:"
-[ "${PF_LIMIT_MSS:-0}" -ne 0 ] && echo "  ✓ MSS limiting (max: ${PF_MAX_MSS})"
-[ "${PF_DROP_INVALID_STATE:-0}" -ne 0 ] && echo "  ✓ Invalid state filtering"
-[ "${PF_DROP_NON_SYN:-0}" -ne 0 ] && echo "  ✓ Non-SYN filtering"
-[ "${PF_CONNLIMIT_PER_IP:-0}" -ne 0 ] && echo "  ✓ Connection limiting (${PF_CONNLIMIT_PER_IP}/IP)"
-[ "${PF_GUARD_UDP_FLOOD:-0}" -ne 0 ] && echo "  ✓ UDP flood protection (${PF_UDP_RATE_LIMIT}/sec)"
-[ "${PF_GUARD_PORT_SCANNER:-0}" -ne 0 ] && echo "  ✓ Port scanner detection (${PF_SCANNER_CONN_RATE}/sec)"
-echo ""
-echo "Apply: pfctl -f $OUTPUT"
-echo "Verify: pfctl -sr | head -20"
-echo ""
+log_info "Generated configuration: $OUTPUT"
 
-# Load blocklist if it exists
-if [ -f "$SCRIPT_DIR/blocklist" ] && [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
-    echo "Loading blocklist table..."
-    if [ "$(id -u)" -eq 0 ]; then
-        "$SCRIPT_DIR/apply-blocklist.sh" --local-only --check-only
+# Summary of enabled security rules
+log_info "Security rules summary:"
+[ "${PF_LIMIT_MSS:-0}" -ne 0 ] && log_info "  MSS limiting enabled (max: ${PF_MAX_MSS})"
+[ "${PF_DROP_INVALID_STATE:-0}" -ne 0 ] && log_info "  Invalid state filtering enabled"
+[ "${PF_DROP_NON_SYN:-0}" -ne 0 ] && log_info "  Non-SYN filtering enabled"
+[ "${PF_CONNLIMIT_PER_IP:-0}" -ne 0 ] && log_info "  Connection limiting enabled (${PF_CONNLIMIT_PER_IP} per IP)"
+[ "${PF_GUARD_UDP_FLOOD:-0}" -ne 0 ] && log_info "  UDP flood protection enabled (${PF_UDP_RATE_LIMIT} packets/sec)"
+[ "${PF_GUARD_PORT_SCANNER:-0}" -ne 0 ] && log_info "  Port scanner detection enabled (${PF_SCANNER_CONN_RATE} connections/sec)"
+
+# Auto-apply if running as root
+if [ "$(id -u)" -eq 0 ]; then
+    log_info "Applying configuration to PF"
+    if pfctl -f "$OUTPUT" 2>&1; then
+        log_info "Configuration applied successfully"
     else
-        echo "  Note: Run with root to load blocklist: doas ./apply-blocklist.sh --local-only"
+        log_error "Failed to apply configuration"
+        [ -f "$BACKUP" ] && mv "$BACKUP" "$OUTPUT"
+        exit 1
+    fi
+
+    # Load blocklist if it exists
+    if [ -f "$SCRIPT_DIR/blocklist" ] && [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
+        log_info "Loading blocklist table"
+        "$SCRIPT_DIR/apply-blocklist.sh" --local-only
+    fi
+else
+    log_warn "Not running as root - configuration generated but not applied"
+    log_info "To apply manually: doas pfctl -f $OUTPUT"
+
+    # Load blocklist if it exists
+    if [ -f "$SCRIPT_DIR/blocklist" ] && [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
+        log_info "To load blocklist: doas $SCRIPT_DIR/apply-blocklist.sh --local-only"
     fi
 fi
+
+log_info "Configuration generation complete"
