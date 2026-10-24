@@ -117,3 +117,8 @@ All scripts maintain single backup files (no timestamps):
 - `/etc/pf.conf.bak` - Last PF config backup
 - `blocklist.bak` - Last blocklist backup
 - `blocklist.info.txt.bak` - Last blocklist metadata backup
+
+## TODO
+
+- need to implement specify inbound, outbound blocklist with separated blocklist table with it's source.
+- implement pflog parser and show blocked lists.
