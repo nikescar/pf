@@ -17,6 +17,15 @@ set -a
 . "$ENV_FILE"
 set +a
 
+# Validate blocklist mode
+BLOCKLIST_MODE="${PF_BLOCKLIST_MODE:-ip}"
+if [ "$BLOCKLIST_MODE" != "ip" ] && [ "$BLOCKLIST_MODE" != "asn" ]; then
+    echo "ERROR: PF_BLOCKLIST_MODE must be 'ip' or 'asn' (got: $BLOCKLIST_MODE)"
+    exit 1
+fi
+
+echo "Blocklist mode: $BLOCKLIST_MODE"
+
 # Files
 IP2ASN_CACHE="$SCRIPT_DIR/ip2asn-v4.tsv"
 IP2ASN_INT_CACHE="$SCRIPT_DIR/ip2asn-v4-int.tsv"
@@ -469,6 +478,71 @@ filter_whitelist() {
 }
 
 #
+# Function: Process IP mode with /24 aggregation
+#
+process_ip_mode() {
+    echo "Processing IP mode..."
+
+    local ip_count=$(wc -l < "$TEMP_DIR/ip_list.txt" | tr -d ' ')
+
+    if [ "$ip_count" -gt 100000 ]; then
+        echo "IP count ($ip_count) exceeds 100k threshold"
+        echo "Aggregating to /24 subnets..."
+
+        # Extract first 3 octets, deduplicate, convert to /24 CIDR
+        awk -F. '{print $1"."$2"."$3".0/24"}' "$TEMP_DIR/ip_list.txt" | \
+            sort -u > "$TEMP_DIR/blocklist_final.txt"
+
+        local subnet_count=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
+        echo "Aggregated $ip_count IPs → $subnet_count /24 subnets"
+    else
+        echo "Using raw IP list ($ip_count entries)"
+        cp "$TEMP_DIR/ip_list.txt" "$TEMP_DIR/blocklist_final.txt"
+    fi
+
+    # Filter private IPs
+    echo "Filtering private IP ranges..."
+    grep -Ev "^192\.168\.|^10\.|^172\.(1[6-9]|2[0-9]|3[01])\.|^127\.|^0\.|^169\.254\." \
+        "$TEMP_DIR/blocklist_final.txt" > "$TEMP_DIR/blocklist_filtered.txt" || true
+
+    # Apply whitelist filter if configured
+    if [ -n "$PF_WHITELIST_RANGES" ]; then
+        echo "Filtering whitelisted ranges..."
+
+        # Create whitelist file
+        echo "$PF_WHITELIST_RANGES" | tr ' ' '\n' > "$TEMP_DIR/whitelist.txt"
+
+        # Simple prefix matching for whitelist (faster than full CIDR overlap)
+        local before=$(wc -l < "$TEMP_DIR/blocklist_filtered.txt" | tr -d ' ')
+
+        # Filter out whitelist entries
+        grep -vFf "$TEMP_DIR/whitelist.txt" "$TEMP_DIR/blocklist_filtered.txt" \
+            > "$TEMP_DIR/blocklist_final.txt" || cp "$TEMP_DIR/blocklist_filtered.txt" "$TEMP_DIR/blocklist_final.txt"
+
+        local after=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
+        local removed=$((before - after))
+        echo "Removed $removed whitelisted entries (${before} -> ${after})"
+    else
+        mv "$TEMP_DIR/blocklist_filtered.txt" "$TEMP_DIR/blocklist_final.txt"
+    fi
+
+    local final_count=$(wc -l < "$TEMP_DIR/blocklist_final.txt" | tr -d ' ')
+    echo "Final blocklist: $final_count entries"
+
+    if [ "$final_count" -eq 0 ]; then
+        echo "ERROR: Final blocklist is empty"
+        exit 1
+    fi
+
+    # Create minimal info file for IP mode
+    echo "# IP mode blocklist (no ASN metadata)" > "$TEMP_DIR/info_final.txt"
+    echo "# Generated: $(date)" >> "$TEMP_DIR/info_final.txt"
+    echo "# Total entries: $final_count" >> "$TEMP_DIR/info_final.txt"
+
+    echo "IP mode processing complete"
+}
+
+#
 # Main execution
 #
 
@@ -483,26 +557,36 @@ if [ -f "${BLOCKLIST_FILE}.info.txt" ]; then
     cp "${BLOCKLIST_FILE}.info.txt" "${BACKUP_FILE}.info.txt"
 fi
 
-# Download and cache ip2asn database
-download_ip2asn
-
-# Download sample IP lists
+# Download IP lists
 download_ip_lists
 
-# Find IP ranges for sample IPs
-find_ranges
+# Process based on blocklist mode
+if [ "$BLOCKLIST_MODE" = "asn" ]; then
+    echo "Using ASN mode (convert IPs to network ranges)..."
 
-# Generate metadata for ranges
-create_metadata
+    # Download and cache ip2asn database
+    download_ip2asn
 
-# Convert to CIDR
-convert_to_cidr
+    # Find IP ranges for sample IPs
+    find_ranges
 
-# Filter whitelisted ranges
-filter_whitelist
+    # Generate metadata for ranges
+    create_metadata
 
-# Finalize blocklist (sort and split after whitelist filter)
-finalize_blocklist
+    # Convert to CIDR
+    convert_to_cidr
+
+    # Filter whitelisted ranges
+    filter_whitelist
+
+    # Finalize blocklist (sort and split after whitelist filter)
+    finalize_blocklist
+else
+    echo "Using IP mode (direct IP blocking with /24 aggregation if needed)..."
+
+    # Process IP mode with aggregation
+    process_ip_mode
+fi
 
 # Deploy new blocklist and info file
 mv "$TEMP_DIR/blocklist_final.txt" "$BLOCKLIST_FILE"
