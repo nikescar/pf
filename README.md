@@ -84,6 +84,24 @@ doas pfctl -sr | grep blocklist
 doas pfctl -vvsTables | grep -A5 blocklist
 ```
 
+## Network Traffic Logger (Optional)
+
+Monitors network connections with automatic daily log rotation:
+
+```bash
+# Install and start logger
+doas ./install-pktstat-logger.sh
+
+# View current logs
+tail -f /var/log/pktstat/pktstat-$(date +%Y-%m-%d).log
+```
+
+**Interface Selection:**
+- If `PF_LAN_ENABLED=1`: monitors `PF_LAN_INTERFACE` (LAN traffic)
+- If `PF_LAN_ENABLED=0`: monitors `PF_ISP_INTERFACE` (WAN traffic)
+
+Logs retained for 7 days with automatic cleanup.
+
 ## Files
 
 - `.env` - Configuration (copy from `.env.example`)

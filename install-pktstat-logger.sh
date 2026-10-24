@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
     log_warn ".env not found at $ENV_FILE"
-    log_error "Please create .env with: PF_ISP_INTERFACE=ure0"
+    log_error "Please create .env with interfaces configured"
     exit 1
 fi
 
@@ -39,13 +39,22 @@ set -a
 . "$ENV_FILE"
 set +a
 
-# Validate PF_ISP_INTERFACE is set
-if [ -z "$PF_ISP_INTERFACE" ]; then
-    log_error "PF_ISP_INTERFACE not set in .env"
-    exit 1
+# Determine interface based on LAN mode
+if [ "${PF_LAN_ENABLED:-0}" = "1" ]; then
+    MONITOR_INTERFACE="${PF_LAN_INTERFACE}"
+    if [ -z "$MONITOR_INTERFACE" ]; then
+        log_error "PF_LAN_ENABLED=1 but PF_LAN_INTERFACE not set in .env"
+        exit 1
+    fi
+    log_info "LAN mode enabled, using interface: $MONITOR_INTERFACE"
+else
+    MONITOR_INTERFACE="${PF_ISP_INTERFACE}"
+    if [ -z "$MONITOR_INTERFACE" ]; then
+        log_error "PF_ISP_INTERFACE not set in .env"
+        exit 1
+    fi
+    log_info "Using ISP interface: $MONITOR_INTERFACE"
 fi
-
-log_info "Using interface: $PF_ISP_INTERFACE"
 
 # Step 1: Check and install pktstat
 log_info "Step 1/6: Checking pktstat"
@@ -74,6 +83,10 @@ cat > "$LOGGER_SCRIPT" <<LOGGER_EOF
 #!/bin/sh
 # pktstat-logger.sh - Continuous network monitoring with daily log rotation
 
+# Set PATH for cron environment
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+export PATH
+
 # Load environment
 ENV_FILE="$ENV_FILE"
 if [ -f "\$ENV_FILE" ]; then
@@ -82,10 +95,19 @@ if [ -f "\$ENV_FILE" ]; then
     set +a
 fi
 
-# Validate interface
-if [ -z "\$PF_ISP_INTERFACE" ]; then
-    echo "Error: PF_ISP_INTERFACE not set in .env" >&2
-    exit 1
+# Determine interface based on LAN mode
+if [ "\${PF_LAN_ENABLED:-0}" = "1" ]; then
+    MONITOR_INTERFACE="\${PF_LAN_INTERFACE}"
+    if [ -z "\$MONITOR_INTERFACE" ]; then
+        echo "Error: PF_LAN_ENABLED=1 but PF_LAN_INTERFACE not set in .env" >&2
+        exit 1
+    fi
+else
+    MONITOR_INTERFACE="\${PF_ISP_INTERFACE}"
+    if [ -z "\$MONITOR_INTERFACE" ]; then
+        echo "Error: PF_ISP_INTERFACE not set in .env" >&2
+        exit 1
+    fi
 fi
 
 LOG_DIR="/var/log/pktstat"
@@ -100,7 +122,7 @@ cleanup_old_logs() {
 # Run cleanup on start
 cleanup_old_logs
 
-echo "Starting pktstat logger on interface \$PF_ISP_INTERFACE"
+echo "Starting pktstat logger on interface \$MONITOR_INTERFACE"
 echo "Logging to: \$LOG_FILE"
 
 # Main logging loop
@@ -115,7 +137,7 @@ while true; do
     fi
 
     # Run pktstat with timestamp
-    pktstat -i "\$PF_ISP_INTERFACE" -F -1 -w 5 -T -n "not (ip proto 89 or ip proto 1 or ip proto 2 or ip proto 103)" 2>/dev/null | \
+    pktstat -i "\$MONITOR_INTERFACE" -F -1 -w 5 -T -n "not (ip proto 89 or ip proto 1 or ip proto 2 or ip proto 103)" 2>/dev/null | \
         awk -v d="\$(date '+%Y-%m-%d %H:%M:%S')" 'NF > 2 {print d, \$0}' >> "\$LOG_FILE" || {
         # If pktstat fails, wait and retry
         sleep 5
