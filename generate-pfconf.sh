@@ -160,7 +160,7 @@ if [ "$(id -u)" -eq 0 ]; then
     # Load blocklist if it exists
     if [ -f "$SCRIPT_DIR/blocklist" ] && [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
         log_info "Loading blocklist table"
-        "$SCRIPT_DIR/apply-blocklist.sh" --local-only --check-only
+        "$SCRIPT_DIR/apply-blocklist.sh" --local-only
     fi
 else
     log_warn "Not running as root - configuration generated but not applied"
