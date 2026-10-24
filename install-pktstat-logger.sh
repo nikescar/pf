@@ -4,17 +4,24 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+APPNAME="install-pktstat-logger"
 
-echo "${GREEN}=== pktstat Logger Installer ===${NC}"
+# RFC 5424 syslog-style logging
+log() {
+    local level="$1"
+    shift
+    printf "%s %s %s: %s\n" "$(date +%Y-%m-%dT%H:%M:%S)" "$level" "$APPNAME" "$*"
+}
+
+log_info() { log "INFO" "$@"; }
+log_warn() { log "WARN" "$@"; }
+log_error() { log "ERROR" "$@"; }
+
+log_info "Starting pktstat logger installation"
 
 # Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
-    echo "${RED}Error: This script must be run as root${NC}"
+    log_error "This script must be run as root"
     exit 1
 fi
 
@@ -22,8 +29,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
-    echo "${YELLOW}Warning: .env not found at $ENV_FILE${NC}"
-    echo "Please create .env with: PF_ISP_INTERFACE=ure0"
+    log_warn ".env not found at $ENV_FILE"
+    log_error "Please create .env with: PF_ISP_INTERFACE=ure0"
     exit 1
 fi
 
@@ -34,34 +41,34 @@ set +a
 
 # Validate PF_ISP_INTERFACE is set
 if [ -z "$PF_ISP_INTERFACE" ]; then
-    echo "${RED}Error: PF_ISP_INTERFACE not set in .env${NC}"
+    log_error "PF_ISP_INTERFACE not set in .env"
     exit 1
 fi
 
-echo "Using interface: ${GREEN}$PF_ISP_INTERFACE${NC}"
+log_info "Using interface: $PF_ISP_INTERFACE"
 
 # Step 1: Check and install pktstat
-echo "\n${GREEN}[1/6]${NC} Checking pktstat..."
+log_info "Step 1/6: Checking pktstat"
 if ! command -v pktstat >/dev/null 2>&1; then
-    echo "${YELLOW}pktstat not found. Installing...${NC}"
+    log_info "pktstat not found. Installing"
     pkg_add pktstat || {
-        echo "${RED}Failed to install pktstat${NC}"
+        log_error "Failed to install pktstat"
         exit 1
     }
 else
-    echo "pktstat already installed"
+    log_info "pktstat already installed"
 fi
 
 # Step 2: Create log directory
 LOG_DIR="/var/log/pktstat"
-echo "\n${GREEN}[2/6]${NC} Creating log directory..."
+log_info "Step 2/6: Creating log directory"
 mkdir -p "$LOG_DIR"
 chmod 755 "$LOG_DIR"
-echo "Created $LOG_DIR"
+log_info "Created $LOG_DIR"
 
 # Step 3: Install logger script
 LOGGER_SCRIPT="/usr/local/bin/pktstat-logger.sh"
-echo "\n${GREEN}[3/6]${NC} Installing logger script..."
+log_info "Step 3/6: Installing logger script"
 
 cat > "$LOGGER_SCRIPT" <<LOGGER_EOF
 #!/bin/sh
@@ -117,23 +124,23 @@ done
 LOGGER_EOF
 
 chmod +x "$LOGGER_SCRIPT"
-echo "Installed $LOGGER_SCRIPT"
+log_info "Installed $LOGGER_SCRIPT"
 
 # Step 4: Add cron entry
-echo "\n${GREEN}[4/6]${NC} Configuring cron..."
+log_info "Step 4/6: Configuring cron"
 CRON_ENTRY="@reboot /usr/local/bin/pktstat-logger.sh >/dev/null 2>&1 &"
 
 # Check if entry already exists
 if crontab -l 2>/dev/null | grep -q "pktstat-logger.sh"; then
-    echo "Cron entry already exists"
+    log_info "Cron entry already exists"
 else
     # Add to crontab
     (crontab -l 2>/dev/null || true; echo "$CRON_ENTRY") | crontab -
-    echo "Added cron entry: $CRON_ENTRY"
+    log_info "Added cron entry: $CRON_ENTRY"
 fi
 
 # Step 5: Start logger
-echo "\n${GREEN}[5/6]${NC} Starting logger..."
+log_info "Step 5/6: Starting logger"
 
 # Kill existing logger if running
 pkill -f "pktstat-logger.sh" 2>/dev/null || true
@@ -144,16 +151,16 @@ nohup "$LOGGER_SCRIPT" >/dev/null 2>&1 &
 LOGGER_PID=$!
 sleep 2
 
-echo "Logger started with PID: $LOGGER_PID"
+log_info "Logger started with PID: $LOGGER_PID"
 
 # Step 6: Verify installation
-echo "\n${GREEN}[6/6]${NC} Verifying installation..."
+log_info "Step 6/6: Verifying installation"
 
 # Check if process is running
 if ps -p "$LOGGER_PID" >/dev/null 2>&1; then
-    echo "${GREEN}✓${NC} Logger process is running (PID: $LOGGER_PID)"
+    log_info "Logger process is running (PID: $LOGGER_PID)"
 else
-    echo "${YELLOW}⚠${NC} Logger process check inconclusive"
+    log_warn "Logger process check inconclusive"
 fi
 
 # Check if log file exists
@@ -161,26 +168,28 @@ sleep 3
 CURRENT_LOG="$LOG_DIR/pktstat-$(date +%Y-%m-%d).log"
 if [ -f "$CURRENT_LOG" ]; then
     LOG_SIZE=$(wc -c < "$CURRENT_LOG")
-    echo "${GREEN}✓${NC} Log file created: $CURRENT_LOG (${LOG_SIZE} bytes)"
-    echo "\nSample output:"
-    tail -3 "$CURRENT_LOG" 2>/dev/null || echo "(waiting for data...)"
+    log_info "Log file created: $CURRENT_LOG (${LOG_SIZE} bytes)"
+    log_info "Sample output:"
+    tail -3 "$CURRENT_LOG" 2>/dev/null || log_info "(waiting for data...)"
 else
-    echo "${YELLOW}⚠${NC} Log file not yet created (may take a few seconds)"
+    log_warn "Log file not yet created (may take a few seconds)"
 fi
 
 # Check cron
 if crontab -l 2>/dev/null | grep -q "pktstat-logger.sh"; then
-    echo "${GREEN}✓${NC} Cron entry configured (@reboot)"
+    log_info "Cron entry configured (@reboot)"
 else
-    echo "${RED}✗${NC} Cron entry not found"
+    log_error "Cron entry not found"
 fi
 
-echo "\n${GREEN}=== Installation Complete ===${NC}"
-echo "\nUseful commands:"
-echo "  View logs:     tail -f $LOG_DIR/pktstat-\$(date +%Y-%m-%d).log"
-echo "  List logs:     ls -lh $LOG_DIR/"
-echo "  Check process: ps aux | grep pktstat-logger"
-echo "  Stop logger:   pkill -f pktstat-logger.sh"
-echo "  Restart:       $LOGGER_SCRIPT &"
-echo "\nLogs are retained for 7 days and rotated daily."
-echo "Using .env from: $ENV_FILE"
+log_info "Installation complete"
+log_info ""
+log_info "Useful commands:"
+log_info "  View logs:     tail -f $LOG_DIR/pktstat-\$(date +%Y-%m-%d).log"
+log_info "  List logs:     ls -lh $LOG_DIR/"
+log_info "  Check process: ps aux | grep pktstat-logger"
+log_info "  Stop logger:   pkill -f pktstat-logger.sh"
+log_info "  Restart:       $LOGGER_SCRIPT &"
+log_info ""
+log_info "Logs are retained for 7 days and rotated daily"
+log_info "Using .env from: $ENV_FILE"
