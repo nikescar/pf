@@ -1,6 +1,6 @@
 # OpenBSD PF with Firehol Blocklist
 
-Adaptive firewall with automatic threat IP blocking (45K+ IPs) and optional security rules.
+Adaptive firewall with automatic threat IP blocking (45K+ IPs) and optional security rules. All scripts use RFC 5424 syslog-style output and maintain single backup files.
 
 ## Quick Start
 
@@ -9,13 +9,12 @@ Adaptive firewall with automatic threat IP blocking (45K+ IPs) and optional secu
 cp .env.example .env
 vi .env  # Edit PF_ISP_INTERFACE, PF_LAN_INTERFACE, enable security rules
 
-# 2. Generate and apply config
-./gen-pf-conf.sh
-pfctl -f /etc/pf.conf
+# 2. Generate and apply config (auto-applies when run as root)
+doas ./generate-pfconf.sh
 
 # 3. Verify
-pfctl -sr | head -20
-pfctl -t blocklist -T show | wc -l
+doas pfctl -sr | head -20
+doas pfctl -t blocklist -T show | wc -l
 ```
 
 ## Configuration (.env)
@@ -45,10 +44,10 @@ GitHub CI regenerates blocklist weekly (Sunday 2am UTC):
 doas ./apply-blocklist.sh
 
 # Preview changes without applying
-./apply-blocklist.sh --dry-run
+doas ./apply-blocklist.sh --dry-run
 
-# Pull but don't reload PF
-./apply-blocklist.sh --check-only
+# Force reapply even if unchanged
+doas ./apply-blocklist.sh --force
 ```
 
 **Cron setup** (weekly check):
@@ -67,10 +66,36 @@ For local processing (slow, use only if needed):
 
 GitHub workflow can also be triggered manually via Actions → "Update Blocklist" → "Run workflow".
 
+## Verification
+
+Check if blocklist is active:
+
+```bash
+# Show blocklist entry count
+doas pfctl -t blocklist -T show | wc -l
+
+# Show first 10 blocked entries
+doas pfctl -t blocklist -T show | head -10
+
+# Verify blocklist in active rules
+doas pfctl -sr | grep blocklist
+
+# Table statistics
+doas pfctl -vvsTables | grep -A5 blocklist
+```
+
 ## Files
 
 - `.env` - Configuration (copy from `.env.example`)
 - `pf.conf.template` - Master template
-- `gen-pf-conf.sh` - Config generator
+- `generate-pfconf.sh` - Config generator with auto-apply
 - `apply-blocklist.sh` - Pull pre-generated blocklist (fast)
 - `update-blocklist.sh` - Regenerate blocklist locally (slow)
+- `install-pktstat-logger.sh` - Optional network traffic logger
+
+## Backups
+
+All scripts maintain single backup files (no timestamps):
+- `/etc/pf.conf.bak` - Last PF config backup
+- `blocklist.bak` - Last blocklist backup
+- `blocklist.info.txt.bak` - Last blocklist metadata backup
