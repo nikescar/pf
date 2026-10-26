@@ -117,7 +117,6 @@ generate_blocklists() {
     # Generate info file
     {
         echo "# PF Blocklist Info - Provider-based"
-        echo "# Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "# Total entries: $total"
         echo ""
         echo "## Per-category breakdown:"
