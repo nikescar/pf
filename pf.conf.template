@@ -40,14 +40,20 @@ table <martians> persist { 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.1
 #Blocklist tables - Provider-based categorized blocking
 #Note: Tables loaded dynamically via pfctl -t <name> -T replace -f output/tables/<name>.txt
 
-# Threat Intelligence - block in+out (7 sources)
+# Threat Intelligence - block in+out (13 sources)
 table <threat_binarydefense> persist
 table <threat_blocklistde> persist
 table <threat_cinsscore> persist
+table <threat_cymru> persist
+table <threat_dshield> persist
 table <threat_emergingthreats> persist
+table <threat_feodo> persist
 table <threat_greensnow> persist
 table <threat_ipsum> persist
+table <threat_spamhaus> persist
+table <threat_stalkerware> persist
 table <threat_stopforumspam> persist
+table <threat_threatfox> persist
 
 # Monitoring - block in only (7 sources)
 table <monitor_betterstack> persist
@@ -140,7 +146,7 @@ antispoof quick for lo0
 block drop in quick on $isp from <martians> to any
 
 #Threat Intelligence - block inbound
-block drop in quick on $isp from {<threat_binarydefense>, <threat_blocklistde>, <threat_cinsscore>, <threat_emergingthreats>, <threat_greensnow>, <threat_ipsum>, <threat_stopforumspam>} to any
+block drop in quick on $isp from {<threat_binarydefense>, <threat_blocklistde>, <threat_cinsscore>, <threat_cymru>, <threat_dshield>, <threat_emergingthreats>, <threat_feodo>, <threat_greensnow>, <threat_ipsum>, <threat_spamhaus>, <threat_stalkerware>, <threat_stopforumspam>, <threat_threatfox>} to any
 
 #Monitoring - block inbound only
 block drop in quick on $isp from {<monitor_betterstack>, <monitor_hetrixtools>, <monitor_ohdear>, <monitor_pingdom>, <monitor_sentry>, <monitor_statuscake>, <monitor_uptimerobot>} to any
@@ -197,7 +203,7 @@ antispoof quick for { lo $lan }
 block drop out quick on $isp from any to <martians>
 
 #Threat Intelligence - block outbound
-block drop out quick on $isp from any to {<threat_binarydefense>, <threat_blocklistde>, <threat_cinsscore>, <threat_emergingthreats>, <threat_greensnow>, <threat_ipsum>, <threat_stopforumspam>}
+block drop out quick on $isp from any to {<threat_binarydefense>, <threat_blocklistde>, <threat_cinsscore>, <threat_cymru>, <threat_dshield>, <threat_emergingthreats>, <threat_feodo>, <threat_greensnow>, <threat_ipsum>, <threat_spamhaus>, <threat_stalkerware>, <threat_stopforumspam>, <threat_threatfox>}
 
 #Security - block outbound
 block drop out quick on $isp from any to {<sec_imperva>, <sec_stormwall>, <sec_sucuri>, <sec_zscaler>}

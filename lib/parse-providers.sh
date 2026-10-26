@@ -3,7 +3,7 @@
 # Parses providers.conf and downloads IPs per source
 
 # Category definitions (asndrop removed - ASN-only, no IPs)
-THREAT_INTEL="binarydefense blocklistde cinsscore cymru dshield emergingthreats feodo greensnow ipsum spamhaus stopforumspam threatfox"
+THREAT_INTEL="binarydefense blocklistde cinsscore cymru dshield emergingthreats feodo greensnow ipsum spamhaus stalkerware stopforumspam threatfox"
 MONITORING="betterstack checkly grafana hetrixtools newrelic nodeping ohdear pingdom sentry site24x7 statuscake updown uptimerobot uptrends"
 SECURITY="imperva stormwall sucuri zscaler"
 CRAWLERS="amazonbot anthropic applebot ccbot claudebot commoncrawl duckassistbot duckduckbot googlebot googlesc googleutf gptbot perplexitybot"
@@ -42,6 +42,14 @@ extract_json_ips() {
     result=$(echo "$content" | jq -r '.prefixes[]?.ipv4Prefix // .prefixes[]?.ip_prefix' 2>/dev/null | grep -v '^null$' | grep -v '^$')
     [ -n "$result" ] && echo "$result" && return 0
 
+    # Try ipv4 object array: {"ipv4":[{"cidr":"1.2.3.4/24"}]}
+    result=$(echo "$content" | jq -r '.ipv4[]?.ip // .ipv4[]?.prefix // .ipv4[]?.cidr' 2>/dev/null | grep -v '^null$' | grep -E '^[0-9]')
+    [ -n "$result" ] && echo "$result" && return 0
+
+    # Try ipv4 simple array: {"ipv4":["1.2.3.4/24"]}
+    result=$(echo "$content" | jq -r '.ipv4[]? | select(type == "string")' 2>/dev/null | grep -E '^[0-9]')
+    [ -n "$result" ] && echo "$result" && return 0
+
     # Try simple string array: ["1.2.3.4", "5.6.7.8"]
     result=$(echo "$content" | jq -r '.[] | select(type == "string")' 2>/dev/null | grep -E '^[0-9]')
     [ -n "$result" ] && echo "$result" && return 0
@@ -58,6 +66,10 @@ extract_json_ips() {
     result=$(echo "$content" | jq -r '.ranges[]? | "\(.range_start)-\(.range_end)"' 2>/dev/null | grep -v '^null$' | grep -E '^[0-9]')
     [ -n "$result" ] && echo "$result" && return 0
 
+    # Try threatfox format: nested objects with ioc_value containing "IP:port"
+    result=$(echo "$content" | jq -r '.[][]?.ioc_value' 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' | cut -d: -f1 | sort -u)
+    [ -n "$result" ] && echo "$result" && return 0
+
     return 1
 }
 
@@ -70,7 +82,7 @@ extract_ips_regex() {
     local content="$1"
 
     # Regex for IPv4 with optional CIDR: 1.2.3.4 or 1.2.3.4/24
-    echo "$content" | grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?\b' | \
+    echo "$content" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?' | \
         # Validate octet ranges (0-255)
         awk -F'[./]' '{
             valid = 1;
@@ -103,7 +115,7 @@ download_provider_ips() {
 
     # Download with timeout
     local content
-    content=$(curl -sSL --max-time "$timeout" "$url" 2>/dev/null)
+    content=$(curl -sSL --max-time "$timeout" "$url" 2>/dev/null | tr -d '\r')
 
     if [ -z "$content" ]; then
         log_warn "Empty response from $name"
@@ -126,7 +138,12 @@ download_provider_ips() {
         # Plain text format - try line-by-line first
         ips=$(echo "$content" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(/[0-9]+)?$')
 
-        # If no clean lines, use regex extraction
+        # DShield format: tab-delimited "startIP endIP prefix ..." -> startIP/prefix
+        if [ -z "$ips" ]; then
+            ips=$(echo "$content" | grep -vE '^#|^$' | awk -F'\t' '$1 ~ /^[0-9]+\./ && $3 ~ /^[0-9]+$/ {print $1"/"$3}')
+        fi
+
+        # If still no IPs, use regex extraction
         if [ -z "$ips" ]; then
             ips=$(extract_ips_regex "$content")
         fi
