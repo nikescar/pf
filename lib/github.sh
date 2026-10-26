@@ -72,10 +72,15 @@ EOF
 
     # Detect OS for platform-specific matching
     local os_name=$(uname -s | tr '[:upper:]' '[:lower:]')
+    log_trace "Detected OS: $os_name, arch: $arch1 (alt: $arch_alt)"
 
     # Convert to lowercase for matching
     local prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
     local postfix_lower=$(echo "$file_postfix" | tr '[:upper:]' '[:lower:]')
+
+    # Show available assets for debugging
+    local asset_count=$(echo "$asset_urls" | wc -l | tr -d ' ')
+    log_trace "Found $asset_count matching assets"
 
     # Try matching strategies - prefer OS-specific builds
     local download_url=""
@@ -89,6 +94,7 @@ EOF
             break
         fi
     done | head -1)
+    [ -n "$download_url" ] && log_trace "Matched strategy 1: OS-specific ($os_name)"
 
     # Strategy 2: prefix AND "bsd" (generic BSD)
     if [ -z "$download_url" ]; then
@@ -100,6 +106,7 @@ EOF
                 break
             fi
         done | head -1)
+        [ -n "$download_url" ] && log_trace "Matched strategy 2: generic BSD"
     fi
 
     # Strategy 3: prefix AND postfix (if specified)
@@ -112,6 +119,7 @@ EOF
                 break
             fi
         done | head -1)
+        [ -n "$download_url" ] && log_trace "Matched strategy 3: prefix+postfix"
     fi
 
     # Strategy 4: prefix AND linux (fallback)
@@ -124,11 +132,13 @@ EOF
                 break
             fi
         done | head -1)
+        [ -n "$download_url" ] && log_trace "Matched strategy 4: linux fallback"
     fi
 
     # Strategy 5: just take first matching arch
     if [ -z "$download_url" ]; then
         download_url=$(echo "$asset_urls" | head -1)
+        [ -n "$download_url" ] && log_trace "Matched strategy 5: first match"
     fi
 
     if [ -z "$download_url" ]; then
