@@ -70,25 +70,51 @@ EOF
         return 1
     fi
 
+    # Detect OS for platform-specific matching
+    local os_name=$(uname -s | tr '[:upper:]' '[:lower:]')
+
     # Convert to lowercase for matching
     local prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
     local postfix_lower=$(echo "$file_postfix" | tr '[:upper:]' '[:lower:]')
 
-    # Try matching strategies (mirrors working example)
+    # Try matching strategies - prefer OS-specific builds
     local download_url=""
 
-    # Strategy 1: prefix AND postfix
+    # Strategy 1: prefix AND current OS (openbsd, freebsd, etc.)
     download_url=$(echo "$asset_urls" | while IFS= read -r url; do
         url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
-        if echo "$url_lower" | grep -q "${prefix_lower}"; then
-            if [ -n "$postfix_lower" ] && echo "$url_lower" | grep -q "${postfix_lower}"; then
-                echo "$url"
-                break
-            fi
+        if echo "$url_lower" | grep -q "${prefix_lower}" && \
+           echo "$url_lower" | grep -q "${os_name}"; then
+            echo "$url"
+            break
         fi
     done | head -1)
 
-    # Strategy 2: prefix AND linux
+    # Strategy 2: prefix AND "bsd" (generic BSD)
+    if [ -z "$download_url" ]; then
+        download_url=$(echo "$asset_urls" | while IFS= read -r url; do
+            url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
+            if echo "$url_lower" | grep -q "${prefix_lower}" && \
+               echo "$url_lower" | grep -q "bsd"; then
+                echo "$url"
+                break
+            fi
+        done | head -1)
+    fi
+
+    # Strategy 3: prefix AND postfix (if specified)
+    if [ -z "$download_url" ] && [ -n "$postfix_lower" ]; then
+        download_url=$(echo "$asset_urls" | while IFS= read -r url; do
+            url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
+            if echo "$url_lower" | grep -q "${prefix_lower}" && \
+               echo "$url_lower" | grep -q "${postfix_lower}"; then
+                echo "$url"
+                break
+            fi
+        done | head -1)
+    fi
+
+    # Strategy 4: prefix AND linux (fallback)
     if [ -z "$download_url" ]; then
         download_url=$(echo "$asset_urls" | while IFS= read -r url; do
             url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
@@ -100,18 +126,7 @@ EOF
         done | head -1)
     fi
 
-    # Strategy 3: arch AND postfix
-    if [ -z "$download_url" ] && [ -n "$postfix_lower" ]; then
-        download_url=$(echo "$asset_urls" | while IFS= read -r url; do
-            url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
-            if echo "$url_lower" | grep -q "${postfix_lower}"; then
-                echo "$url"
-                break
-            fi
-        done | head -1)
-    fi
-
-    # Strategy 4: just take first matching arch
+    # Strategy 5: just take first matching arch
     if [ -z "$download_url" ]; then
         download_url=$(echo "$asset_urls" | head -1)
     fi
