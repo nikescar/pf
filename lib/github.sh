@@ -50,20 +50,23 @@ EOF
         log_trace "Using GitHub token for API request"
     fi
 
-    # Normalize architecture (x86_64 -> amd64)
-    local arch_normalized="$arch1"
+    # Normalize architecture (bidirectional: x86_64 ↔ amd64, aarch64 ↔ arm64)
+    local arch_alt=""
     case "$arch1" in
-        x86_64) arch_normalized="amd64" ;;
-        aarch64) arch_normalized="arm64" ;;
+        x86_64) arch_alt="amd64" ;;
+        amd64) arch_alt="x86_64" ;;
+        aarch64) arch_alt="arm64" ;;
+        arm64) arch_alt="aarch64" ;;
+        *) arch_alt="$arch1" ;;
     esac
 
-    # Get assets filtered by architecture from jq
+    # Get assets filtered by architecture from jq (try both arch1 and arch_alt)
     # This mirrors the working example's approach
     local asset_urls=$(eval "${curl_cmd}" "${api_url}" | \
-        jq -r '.assets[] | select(.name | contains("'${arch1}'") or contains("'${arch_normalized}'")) | .browser_download_url' 2>/dev/null)
+        jq -r '.assets[] | select(.name | contains("'${arch1}'") or contains("'${arch_alt}'")) | .browser_download_url' 2>/dev/null)
 
     if [ -z "$asset_urls" ]; then
-        log_warn "No assets found matching arch: $arch1 or $arch_normalized"
+        log_warn "No assets found matching arch: $arch1 or $arch_alt"
         return 1
     fi
 
