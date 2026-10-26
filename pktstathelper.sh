@@ -145,14 +145,27 @@ cmd_install() {
         log_info "cdn-lookup installed successfully"
     fi
 
-    # Step 3: Create log directory
-    log_info "Step 3/7: Creating log directory"
+    # Step 3: Copy .env to portable location
+    log_info "Step 3/7: Copying .env to portable location"
+    local config_dir="$HOME/.config/pf"
+    ensure_dir "$config_dir"
+    if [ -f "$SCRIPT_DIR/.env" ]; then
+        cp "$SCRIPT_DIR/.env" "$config_dir/.env"
+        chmod 644 "$config_dir/.env"
+        log_info "Copied .env to $config_dir/.env"
+    else
+        log_error ".env not found in $SCRIPT_DIR"
+        exit 1
+    fi
+
+    # Step 4: Create log directory
+    log_info "Step 4/7: Creating log directory"
     ensure_dir "$LOG_DIR"
     chmod 755 "$LOG_DIR"
     log_info "Created $LOG_DIR"
 
-    # Step 4: Install logger script
-    log_info "Step 4/7: Installing logger script"
+    # Step 5: Install logger script
+    log_info "Step 5/7: Installing logger script"
 
     cat > "$LOGGER_SCRIPT" <<'LOGGER_EOF'
 #!/bin/ksh
@@ -367,8 +380,8 @@ LOGGER_EOF
     chmod +x "$LOGGER_SCRIPT"
     log_info "Installed $LOGGER_SCRIPT"
 
-    # Step 5: Add cron entry
-    log_info "Step 5/7: Configuring cron"
+    # Step 6: Add cron entry
+    log_info "Step 6/7: Configuring cron"
     local cron_entry="@reboot $LOGGER_SCRIPT >/dev/null 2>&1 &"
 
     if crontab -l 2>/dev/null | grep -q "$CRON_PATTERN"; then
@@ -378,8 +391,8 @@ LOGGER_EOF
         log_info "Added cron entry: $cron_entry"
     fi
 
-    # Step 6: Start logger
-    log_info "Step 6/7: Starting logger"
+    # Step 7: Start logger
+    log_info "Step 7/7: Starting logger"
 
     # Kill existing logger if running
     pkill -f "^$LOGGER_SCRIPT" 2>/dev/null && log_info "Stopped existing logger" || true
@@ -409,8 +422,8 @@ LOGGER_EOF
         exit 1
     fi
 
-    # Step 7: Verify installation
-    log_info "Step 7/7: Verifying installation"
+    # Verify installation
+    log_info "Verifying installation"
 
     sleep 3
     local current_log="$LOG_DIR/pktstat-$(date +%Y-%m-%d).log"
