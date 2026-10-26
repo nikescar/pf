@@ -72,60 +72,50 @@ Each source gets a dedicated PF table: `<category_source>` (e.g., `threat_blockl
 
 See `.env.example` for all options.
 
-## Blocklist Updates
+## Usage
 
-### Manual Regeneration (Recommended for First Setup)
+### pfhelper.sh - Unified Management Tool
 
-Downloads IPs from 31 working providers and generates per-source tables:
+Single script for all blocklist operations:
 
 ```bash
-./update-blocklist.sh  # Downloads from all providers (~1-3 min)
+# Complete installation (first-time setup)
+doas ./pfhelper.sh --install
+
+# Update blocklists (weekly maintenance)
+doas ./pfhelper.sh --update
+
+# Remove all provider tables
+doas ./pfhelper.sh --purge
 ```
 
-This creates:
-- `output/tables/{category}_{provider}.txt` - 31 table files (one per provider)
-- `output/blocklist` - Aggregated file (backward compatibility, ~50K+ IPs)
-- `output/blocklist.info.txt` - Metadata with per-source counts
+### Commands
 
-**Features:**
-- Automatic JSON parsing with regex fallback
-- Validates all IP addresses (0-255 octets, /0-32 CIDR)
-- Deduplicates entries per provider
-- Skips providers with no extractable IPs
+**`--install`** - Complete setup
+- Downloads providers.conf
+- Downloads IPs from 31 providers (~1-3 min)
+- Generates 31 table files in `output/tables/`
+- Generates `/etc/pf.conf` from template
+- Validates and applies PF config
+- Loads all provider tables into PF
 
-### Apply Tables to PF
+**`--update`** - Update workflow  
+- Re-downloads provider IPs
+- Regenerates table files
+- Reloads tables into PF
+- Does NOT regenerate `/etc/pf.conf`
 
-**Automatic (via generate-pfconf.sh):**
+**`--purge`** - Remove tables
+- Flushes all provider tables from PF
+- Leaves files on disk (use `--install` to reload)
+
+### Automated Updates
+
+**Cron setup** (weekly updates):
 ```bash
-# Generates config + loads tables in one command
-doas ./generate-pfconf.sh
+crontab -e
+# Add: 0 3 * * 1 cd /path/to/pf && doas ./pfhelper.sh --update
 ```
-
-**Manual (standalone table management):**
-```bash
-# Load all tables
-doas ./apply-blocklist.sh
-
-# Preview tables without loading
-doas ./apply-blocklist.sh --dry-run
-
-# Force reload all tables
-doas ./apply-blocklist.sh --force
-
-# Remove all provider tables from PF
-doas ./apply-blocklist.sh --purge
-```
-
-**Options:**
-- `--dry-run` - Show what would be loaded without applying
-- `--force` - Force reload all tables even if already loaded
-- `--purge` - Flush all provider tables from PF (useful before maintenance or testing)
-
-**When to use standalone mode:**
-- Table-only updates (no config changes)
-- Troubleshooting table loading
-- Purging tables before maintenance
-- Testing table loading without config reload
 
 **Cron setup** (weekly update):
 ```bash
@@ -179,9 +169,7 @@ Logs retained for 7 days with automatic cleanup.
 ## Files
 
 ### Scripts
-- **`update-blocklist.sh`** - Download IPs from 31 providers, generate tables
-- **`generate-pfconf.sh`** - Generate /etc/pf.conf from template + load tables
-- **`apply-blocklist.sh`** - Standalone table loader (load/purge provider tables)
+- **`pfhelper.sh`** - Unified management tool (install/update/purge)
 - **`install-pktstat-logger.sh`** - Optional network traffic logger
 
 ### Configuration
@@ -190,6 +178,7 @@ Logs retained for 7 days with automatic cleanup.
 - **`providers.conf`** - Provider list from cdn-lookup (auto-downloaded)
 
 ### Libraries
+- **`lib/common.sh`** - Shared functions (logging, env loading, utilities)
 - **`lib/parse-providers.sh`** - Provider parser with JSON + regex fallback
 
 ### Data Directories
@@ -198,16 +187,26 @@ Logs retained for 7 days with automatic cleanup.
 - **`output/blocklist`** - Aggregated file, ~50K+ IPs (backward compat)
 - **`output/blocklist.info.txt`** - Per-source metadata
 
-### Workflow Integration
+### Workflow
 
 ```
-update-blocklist.sh → output/tables/*.txt
-                             ↓
-                    apply-blocklist.sh → PF tables
-                             ↓
-generate-pfconf.sh → /etc/pf.conf → pfctl -f
-         ↓
-   (calls apply-blocklist.sh automatically when run as root)
+pfhelper.sh --install
+    ↓
+    1. Download providers.conf
+    2. Generate output/tables/*.txt (31 files)
+    3. Generate /etc/pf.conf from template
+    4. Apply config with pfctl -f
+    5. Load all tables with pfctl -t <name> -T replace
+
+pfhelper.sh --update
+    ↓
+    1. Download providers.conf
+    2. Regenerate output/tables/*.txt
+    3. Reload tables (no config change)
+
+pfhelper.sh --purge
+    ↓
+    1. Flush all provider tables from PF
 ```
 
 ## Backups
@@ -224,15 +223,12 @@ All scripts maintain single backup files (no timestamps):
 # Check table files exist
 ls -lh output/tables/
 
-# Manually load a table
-doas pfctl -t threat_blocklistde -T replace -f output/tables/threat_blocklistde.txt
-
 # Check PF memory limits
 doas pfctl -sm
 
-# Clear all tables and reload
-doas ./apply-blocklist.sh --purge
-doas ./apply-blocklist.sh
+# Clear all tables and reinstall
+doas ./pfhelper.sh --purge
+doas ./pfhelper.sh --install
 ```
 
 ### Provider download fails
@@ -269,4 +265,7 @@ pfctl -nf pf.conf.template
 
 # Check all variables set
 grep PF_ .env
+
+# Validate .env configuration
+./pfhelper.sh --help  # Will fail if .env missing/invalid
 ```
