@@ -395,8 +395,11 @@ LOGGER_EOF
     log_info "Step 7/7: Starting logger"
 
     # Kill existing logger if running
-    pkill -f "^$LOGGER_SCRIPT" 2>/dev/null && log_info "Stopped existing logger" || true
-    sleep 1
+    if pgrep -f "$LOGGER_SCRIPT" >/dev/null 2>&1; then
+        pkill -f "$LOGGER_SCRIPT" 2>/dev/null
+        sleep 1
+        log_info "Stopped existing logger"
+    fi
 
     # Test logger script syntax
     if ! sh -n "$LOGGER_SCRIPT" 2>&1; then
@@ -452,7 +455,15 @@ cmd_uninstall() {
 
     # Stop running logger
     log_info "Stopping logger process"
-    if pkill -f "^$LOGGER_SCRIPT" 2>/dev/null; then
+    local pids=$(pgrep -f "$LOGGER_SCRIPT" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        pkill -f "$LOGGER_SCRIPT" 2>/dev/null
+        sleep 1
+        # Verify stopped
+        if pgrep -f "$LOGGER_SCRIPT" >/dev/null 2>&1; then
+            log_warn "Some processes still running, forcing kill"
+            pkill -9 -f "$LOGGER_SCRIPT" 2>/dev/null
+        fi
         log_info "Logger process stopped"
     else
         log_info "No logger process found"
@@ -495,9 +506,9 @@ cmd_status() {
 
     # Check running process
     log_info "Process status:"
-    local pid=$(pgrep -f "^$LOGGER_SCRIPT" 2>/dev/null)
-    if [ -n "$pid" ]; then
-        log_info "  Running: YES (PID: $pid)"
+    local pids=$(pgrep -f "$LOGGER_SCRIPT" 2>/dev/null | tr '\n' ' ')
+    if [ -n "$pids" ]; then
+        log_info "  Running: YES (PID: $pids)"
     else
         log_info "  Running: NO"
     fi
