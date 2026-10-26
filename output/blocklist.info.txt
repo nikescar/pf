@@ -1,10 +1,9 @@
 # PF Blocklist Info - Provider-based
-# Generated: 2026-10-26T05:30:53Z
-# Total entries: 54108
+# Total entries: 62895
 
 ## Per-category breakdown:
-  - threat: 7 sources, 64644 IPs
-  - monitor: 7 sources, 623 IPs
+  - threat: 13 sources, 72005 IPs
+  - monitor: 14 sources, 2054 IPs
   - security: 4 sources, 161 IPs
   - crawler: 13 sources, 5131 IPs
 
@@ -23,12 +22,19 @@
   - crawler_gptbot                                265 IPs
   - crawler_perplexitybot                          12 IPs
   - monitor_betterstack                            25 IPs
+  - monitor_checkly                               159 IPs
+  - monitor_grafana                                68 IPs
   - monitor_hetrixtools                           103 IPs
+  - monitor_newrelic                               63 IPs
+  - monitor_nodeping                               33 IPs
   - monitor_ohdear                                 46 IPs
   - monitor_pingdom                               152 IPs
   - monitor_sentry                                 12 IPs
+  - monitor_site24x7                              718 IPs
   - monitor_statuscake                            183 IPs
+  - monitor_updown                                 11 IPs
   - monitor_uptimerobot                           102 IPs
+  - monitor_uptrends                              379 IPs
   - security_imperva                               11 IPs
   - security_stormwall                              9 IPs
   - security_sucuri                                11 IPs
@@ -36,7 +42,13 @@
   - threat_binarydefense                          540 IPs
   - threat_blocklistde                          23447 IPs
   - threat_cinsscore                            15000 IPs
+  - threat_cymru                                 3031 IPs
+  - threat_dshield                                 20 IPs
   - threat_emergingthreats                        482 IPs
+  - threat_feodo                                    5 IPs
   - threat_greensnow                             5193 IPs
   - threat_ipsum                                19922 IPs
+  - threat_spamhaus                              1687 IPs
+  - threat_stalkerware                             69 IPs
   - threat_stopforumspam                           60 IPs
+  - threat_threatfox                             2549 IPs
