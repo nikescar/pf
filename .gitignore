@@ -1,4 +1,4 @@
 .env
 input/
-output/
+output/*.bak
 tmp/
