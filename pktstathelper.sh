@@ -478,11 +478,24 @@ cmd_uninstall() {
         log_info "No cron entry found"
     fi
 
-    # Optionally remove logger script
+    # Remove logger script
     if [ -f "$LOGGER_SCRIPT" ]; then
-        log_info "Logger script still exists: $LOGGER_SCRIPT"
+        rm -f "$LOGGER_SCRIPT"
+        log_info "Removed logger script: $LOGGER_SCRIPT"
+    else
+        log_info "Logger script not found"
+    fi
+
+    # Check if cdn-lookup is installed
+    if command -v cdn-lookup >/dev/null 2>&1; then
+        log_info "cdn-lookup is still installed at: $(command -v cdn-lookup)"
+        log_info "Run manually to remove: doas rm $(command -v cdn-lookup)"
+    fi
+
+    # Preserve log directory
+    if [ -d "$LOG_DIR" ]; then
         log_info "Log directory preserved: $LOG_DIR"
-        log_info "Run manually to remove: rm $LOGGER_SCRIPT"
+        log_info "Run manually to remove: doas rm -rf $LOG_DIR"
     fi
 
     log_info "=== Uninstall Complete ==="
