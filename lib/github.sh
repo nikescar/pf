@@ -50,103 +50,67 @@ EOF
         log_trace "Using GitHub token for API request"
     fi
 
-    # Get ALL assets first (without architecture filtering)
-    local all_assets=$(eval "${curl_cmd}" "${api_url}" | \
-        jq -r '.assets[].browser_download_url' 2>/dev/null)
-
-    if [ -z "$all_assets" ]; then
-        log_warn "No assets found for $repo"
-        return 1
-    fi
-
-    # Try architecture-specific filtering first
-    local asset_list=$(echo "$all_assets" | while IFS= read -r url; do
-        local name=$(basename "$url" | tr '[:upper:]' '[:lower:]')
-        local arch1_lower=$(echo "$arch1" | tr '[:upper:]' '[:lower:]')
-        local arch2_lower=$(echo "$arch2" | tr '[:upper:]' '[:lower:]')
-        if echo "$name" | grep -qE "${arch1_lower}|${arch2_lower}"; then
-            echo "$url"
-        fi
-    done)
-
-    # If no arch-specific assets, use all assets
-    if [ -z "$asset_list" ]; then
-        log_trace "No arch-specific assets, trying all assets"
-        asset_list="$all_assets"
-    fi
-
-    # Detect OS and normalize arch
-    local os_name=$(uname -s | tr '[:upper:]' '[:lower:]')
+    # Normalize architecture (x86_64 -> amd64)
     local arch_normalized="$arch1"
     case "$arch1" in
         x86_64) arch_normalized="amd64" ;;
         aarch64) arch_normalized="arm64" ;;
     esac
 
-    # Try matching strategies in order of preference
+    # Get assets filtered by architecture from jq
+    # This mirrors the working example's approach
+    local asset_urls=$(eval "${curl_cmd}" "${api_url}" | \
+        jq -r '.assets[] | select(.name | contains("'${arch1}'") or contains("'${arch_normalized}'")) | .browser_download_url' 2>/dev/null)
+
+    if [ -z "$asset_urls" ]; then
+        log_warn "No assets found matching arch: $arch1 or $arch_normalized"
+        return 1
+    fi
+
+    # Convert to lowercase for matching
+    local prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
+    local postfix_lower=$(echo "$file_postfix" | tr '[:upper:]' '[:lower:]')
+
+    # Try matching strategies (mirrors working example)
     local download_url=""
 
-    # Strategy 1: prefix + openbsd + arch
-    download_url=$(echo "$asset_list" | while IFS= read -r url; do
+    # Strategy 1: prefix AND postfix
+    download_url=$(echo "$asset_urls" | while IFS= read -r url; do
         url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
-        prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
-        # Must have: prefix AND openbsd AND (x86_64 OR amd64)
-        # Must not have: aarch64, arm64, arm
-        if echo "$url_lower" | grep -q "${prefix_lower}" && \
-           echo "$url_lower" | grep -q "openbsd" && \
-           echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
-            if ! echo "$url_lower" | grep -qE "aarch64|arm64|arm"; then
+        if echo "$url_lower" | grep -q "${prefix_lower}"; then
+            if [ -n "$postfix_lower" ] && echo "$url_lower" | grep -q "${postfix_lower}"; then
                 echo "$url"
                 break
             fi
         fi
-    done)
+    done | head -1)
 
-    # Strategy 2: prefix + bsd + arch
+    # Strategy 2: prefix AND linux
     if [ -z "$download_url" ]; then
-        download_url=$(echo "$asset_list" | while IFS= read -r url; do
+        download_url=$(echo "$asset_urls" | while IFS= read -r url; do
             url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
-            prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
             if echo "$url_lower" | grep -q "${prefix_lower}" && \
-               echo "$url_lower" | grep -q "bsd" && \
-               echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
-                if ! echo "$url_lower" | grep -qE "aarch64|arm64|arm|android"; then
-                    echo "$url"
-                    break
-                fi
+               echo "$url_lower" | grep -q "linux"; then
+                echo "$url"
+                break
             fi
-        done)
+        done | head -1)
     fi
 
-    # Strategy 3: prefix + linux + arch (not arm)
-    if [ -z "$download_url" ]; then
-        download_url=$(echo "$asset_list" | while IFS= read -r url; do
+    # Strategy 3: arch AND postfix
+    if [ -z "$download_url" ] && [ -n "$postfix_lower" ]; then
+        download_url=$(echo "$asset_urls" | while IFS= read -r url; do
             url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
-            prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
-            if echo "$url_lower" | grep -q "${prefix_lower}" && \
-               echo "$url_lower" | grep -q "linux" && \
-               echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
-                if ! echo "$url_lower" | grep -qE "aarch64|arm64|arm|android"; then
-                    echo "$url"
-                    break
-                fi
+            if echo "$url_lower" | grep -q "${postfix_lower}"; then
+                echo "$url"
+                break
             fi
-        done)
+        done | head -1)
     fi
 
-    # Strategy 4: prefix + arch (any OS, not arm)
+    # Strategy 4: just take first matching arch
     if [ -z "$download_url" ]; then
-        download_url=$(echo "$asset_list" | while IFS= read -r url; do
-            url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
-            prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
-            if echo "$url_lower" | grep -q "${prefix_lower}" && \
-               echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
-                if ! echo "$url_lower" | grep -qE "aarch64|arm64|arm|android|darwin|windows|macos"; then
-                    echo "$url"
-                    break
-                fi
-            fi
-        done)
+        download_url=$(echo "$asset_urls" | head -1)
     fi
 
     if [ -z "$download_url" ]; then
