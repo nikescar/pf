@@ -154,10 +154,16 @@ Monitors network connections with automatic daily log rotation:
 
 ```bash
 # Install and start logger
-doas ./install-pktstat-logger.sh
+doas ./pktstathelper.sh --install
+
+# Check status
+./pktstathelper.sh --status
 
 # View current logs
 tail -f /var/log/pktstat/pktstat-$(date +%Y-%m-%d).log
+
+# Uninstall logger
+doas ./pktstathelper.sh --uninstall
 ```
 
 **Interface Selection:**
@@ -169,8 +175,8 @@ Logs retained for 7 days with automatic cleanup.
 ## Files
 
 ### Scripts
-- **`pfhelper.sh`** - Unified management tool (install/update/purge)
-- **`install-pktstat-logger.sh`** - Optional network traffic logger
+- **`pfhelper.sh`** - Unified blocklist management (install/update/purge)
+- **`pktstathelper.sh`** - Optional network traffic logger (install/uninstall/status)
 
 ### Configuration
 - **`.env`** - Configuration (copy from `.env.example`)
@@ -180,6 +186,7 @@ Logs retained for 7 days with automatic cleanup.
 ### Libraries
 - **`lib/common.sh`** - Shared functions (logging, env loading, utilities)
 - **`lib/parse-providers.sh`** - Provider parser with JSON + regex fallback
+- **`lib/github.sh`** - GitHub release download functions
 
 ### Data Directories
 - **`input/`** - Legacy data sources (git-ignored)
