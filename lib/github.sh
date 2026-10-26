@@ -50,13 +50,29 @@ EOF
         log_trace "Using GitHub token for API request"
     fi
 
-    # Get list of matching assets
-    local asset_list=$(eval "${curl_cmd}" "${api_url}" | \
-        jq -r '.assets[] | select(.name | contains("'"${arch1}"'") or contains("'"${arch2}"'")) | .browser_download_url' 2>/dev/null)
+    # Get ALL assets first (without architecture filtering)
+    local all_assets=$(eval "${curl_cmd}" "${api_url}" | \
+        jq -r '.assets[].browser_download_url' 2>/dev/null)
 
-    if [ -z "$asset_list" ]; then
-        log_warn "No assets found for $repo matching $file_pattern"
+    if [ -z "$all_assets" ]; then
+        log_warn "No assets found for $repo"
         return 1
+    fi
+
+    # Try architecture-specific filtering first
+    local asset_list=$(echo "$all_assets" | while IFS= read -r url; do
+        local name=$(basename "$url" | tr '[:upper:]' '[:lower:]')
+        local arch1_lower=$(echo "$arch1" | tr '[:upper:]' '[:lower:]')
+        local arch2_lower=$(echo "$arch2" | tr '[:upper:]' '[:lower:]')
+        if echo "$name" | grep -qE "${arch1_lower}|${arch2_lower}"; then
+            echo "$url"
+        fi
+    done)
+
+    # If no arch-specific assets, use all assets
+    if [ -z "$asset_list" ]; then
+        log_trace "No arch-specific assets, trying all assets"
+        asset_list="$all_assets"
     fi
 
     # Try matching strategies in order of preference
