@@ -37,9 +37,48 @@ set limit table-entries 20000000
 #RFC1918 and RFC5735 local address ranges which should not be routed over the WAN back and forth [LAN <-> WAN]
 table <martians> persist { 0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 192.88.99.0/24 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4 248.0.0.0/5 255.255.255.255/32 }
 
-#Blocklist of bad WAN IP-address(es) [LAN <-> WAN]
-#Note: Large blocklist loaded dynamically via pfctl -t blocklist -T replace -f blocklist
-table <blocklist> persist
+#Blocklist tables - Provider-based categorized blocking
+#Note: Tables loaded dynamically via pfctl -t <name> -T replace -f output/tables/<name>.txt
+
+# Threat Intelligence - block in+out (7 sources)
+table <threat_binarydefense> persist
+table <threat_blocklistde> persist
+table <threat_cinsscore> persist
+table <threat_emergingthreats> persist
+table <threat_greensnow> persist
+table <threat_ipsum> persist
+table <threat_stopforumspam> persist
+
+# Monitoring - block in only (7 sources)
+table <monitor_betterstack> persist
+table <monitor_hetrixtools> persist
+table <monitor_ohdear> persist
+table <monitor_pingdom> persist
+table <monitor_sentry> persist
+table <monitor_statuscake> persist
+table <monitor_uptimerobot> persist
+
+# Security - block in+out (4 sources)
+table <sec_imperva> persist
+table <sec_stormwall> persist
+table <sec_sucuri> persist
+table <sec_zscaler> persist
+
+# Crawlers & Bots - block in+out (13 sources)
+table <crawler_amazonbot> persist
+table <crawler_anthropic> persist
+table <crawler_applebot> persist
+table <crawler_ccbot> persist
+table <crawler_claudebot> persist
+table <crawler_commoncrawl> persist
+table <crawler_duckassistbot> persist
+table <crawler_duckduckbot> persist
+table <crawler_googlebot> persist
+table <crawler_googlesc> persist
+table <crawler_googleutf> persist
+table <crawler_gptbot> persist
+table <crawler_perplexitybot> persist
+
 #SSH brute-force blocklist [Management network <> Edge firewall]
 table <bruteforce> persist
 
@@ -96,9 +135,21 @@ antispoof quick for lo0
 ##################
 #INPUT rules     #
 ##################
-#[WAN <- Martians & blocklisted IP-addresses]
-#Block packets from wrong address ranges and blocklisted IPs
-block drop in quick on $isp from {<martians>, <blocklist>} to any
+#[WAN <- Martians & Provider blocklists]
+#Block packets from wrong address ranges
+block drop in quick on $isp from <martians> to any
+
+#Threat Intelligence - block inbound
+block drop in quick on $isp from {<threat_binarydefense>, <threat_blocklistde>, <threat_cinsscore>, <threat_emergingthreats>, <threat_greensnow>, <threat_ipsum>, <threat_stopforumspam>} to any
+
+#Monitoring - block inbound only
+block drop in quick on $isp from {<monitor_betterstack>, <monitor_hetrixtools>, <monitor_ohdear>, <monitor_pingdom>, <monitor_sentry>, <monitor_statuscake>, <monitor_uptimerobot>} to any
+
+#Security - block inbound
+block drop in quick on $isp from {<sec_imperva>, <sec_stormwall>, <sec_sucuri>, <sec_zscaler>} to any
+
+#Crawlers & Bots - block inbound
+block drop in quick on $isp from {<crawler_amazonbot>, <crawler_anthropic>, <crawler_applebot>, <crawler_ccbot>, <crawler_claudebot>, <crawler_commoncrawl>, <crawler_duckassistbot>, <crawler_duckduckbot>, <crawler_googlebot>, <crawler_googlesc>, <crawler_googleutf>, <crawler_gptbot>, <crawler_perplexitybot>} to any
 
 ### SEC_CONNLIMIT_START ###
 # Connection limiting per source IP
@@ -141,9 +192,18 @@ antispoof quick for { lo $lan }
 ##################
 #OUTPUT rules    #
 ##################
-#[WAN -> Martians & blocklisted IPs]
-#Do not sent RFC1918 IP-addresses over the WAN and do not access blocklisted IP-addresses
-block drop out quick on $isp from any to {<martians>, <blocklist>}
+#[WAN -> Martians & Provider blocklists]
+#Do not sent RFC1918 IP-addresses over the WAN
+block drop out quick on $isp from any to <martians>
+
+#Threat Intelligence - block outbound
+block drop out quick on $isp from any to {<threat_binarydefense>, <threat_blocklistde>, <threat_cinsscore>, <threat_emergingthreats>, <threat_greensnow>, <threat_ipsum>, <threat_stopforumspam>}
+
+#Security - block outbound
+block drop out quick on $isp from any to {<sec_imperva>, <sec_stormwall>, <sec_sucuri>, <sec_zscaler>}
+
+#Crawlers & Bots - block outbound
+block drop out quick on $isp from any to {<crawler_amazonbot>, <crawler_anthropic>, <crawler_applebot>, <crawler_ccbot>, <crawler_claudebot>, <crawler_commoncrawl>, <crawler_duckassistbot>, <crawler_duckduckbot>, <crawler_googlebot>, <crawler_googlesc>, <crawler_googleutf>, <crawler_gptbot>, <crawler_perplexitybot>}
 
 #Allow traffic from the edge firewall WAN interface to route to the WAN for ping, nslookup and system updates
 #[(WAN) Firewall -> WAN]

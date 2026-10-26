@@ -157,19 +157,25 @@ if [ "$(id -u)" -eq 0 ]; then
         exit 1
     fi
 
-    # Load blocklist if it exists
-    if [ -f "$SCRIPT_DIR/blocklist" ] && [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
-        log_info "Loading blocklist table"
-        "$SCRIPT_DIR/apply-blocklist.sh" --local-only
+    # Load provider tables if they exist
+    if [ -d "$SCRIPT_DIR/output/tables" ] && [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
+        TABLE_COUNT=$(find "$SCRIPT_DIR/output/tables" -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$TABLE_COUNT" -gt 0 ]; then
+            log_info "Loading $TABLE_COUNT provider tables"
+            "$SCRIPT_DIR/apply-blocklist.sh"
+        else
+            log_warn "No provider tables found in output/tables/"
+            log_info "Run ./update-blocklist.sh to generate tables"
+        fi
+    else
+        log_warn "Provider tables not found"
+        log_info "Run ./update-blocklist.sh to generate tables"
     fi
 else
     log_warn "Not running as root - configuration generated but not applied"
-    log_info "To apply manually: doas pfctl -f $OUTPUT"
-
-    # Load blocklist if it exists
-    if [ -f "$SCRIPT_DIR/blocklist" ] && [ -f "$SCRIPT_DIR/apply-blocklist.sh" ]; then
-        log_info "To load blocklist: doas $SCRIPT_DIR/apply-blocklist.sh --local-only"
-    fi
+    log_info "To apply manually:"
+    log_info "  doas pfctl -f $OUTPUT"
+    log_info "  doas $SCRIPT_DIR/apply-blocklist.sh"
 fi
 
 log_info "Configuration generation complete"

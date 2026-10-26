@@ -16,6 +16,98 @@ log() {
 log_info() { log "INFO" "$@"; }
 log_warn() { log "WARN" "$@"; }
 log_error() { log "ERROR" "$@"; }
+log_debug() { log "DEBUG" "$@"; }
+log_trace() { log "TRACE" "$@"; }
+
+_trim_string() {
+    echo "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+_download_github_pkgs() { # _download_github_pkgs DNSCrypt/dnscrypt-proxy dnscrypt-proxy-linux*.tar.gz
+    local arch1 arch2
+    arch1=$(uname -m)
+    arch2=$(uname -m)
+    [ -n "${3}" ] && arch1=${3}
+    [ -n "${4}" ] && arch2=${4}
+    [ "$(echo "$1" | grep -c "/")" != 1 ] && log_debug "please set githubid/repoid." && return 1
+    local pkgurl="https://api.github.com/repos/$(_trim_string "$1")/releases/latest"
+
+    IFS='*' read -r pkgfileprefix pkgfilepostfix <<EOF
+$(_trim_string "$2")
+EOF
+    [ -n "$(find "${JANGBI_IT}/pkgs/" -name "$2" 2>/dev/null)" ] && rm -f "${JANGBI_IT}/pkgs/$2"
+    pkgfileprefix=$(_trim_string "${pkgfileprefix}")
+    pkgfilepostfix=$(_trim_string "${pkgfilepostfix}")
+
+    # Use GitHub token if available to avoid rate limiting
+    local curl_cmd="curl -sSL"
+    if [ -n "${GITHUB_TOKEN}" ]; then
+        curl_cmd="curl -sSL -H \"Authorization: Bearer ${GITHUB_TOKEN}\""
+        log_trace "Using GitHub token for API request"
+    fi
+
+    local possible_list=$(eval "${curl_cmd}" "${pkgurl}" | jq -r '.assets[] | select(.name | contains("'"${arch1}"'") or contains("'"${arch2}"'")) | .browser_download_url')
+
+    if [ -n "$possible_list" ]; then
+        echo "$possible_list" | while IFS= read -r durl; do
+            durl=$(_trim_string "${durl}")
+            durl_lower=$(echo "$durl" | tr '[:upper:]' '[:lower:]')
+            prefix_lower=$(echo "$pkgfileprefix" | tr '[:upper:]' '[:lower:]')
+            postfix_lower=$(echo "$pkgfilepostfix" | tr '[:upper:]' '[:lower:]')
+
+            # Type 1: matches both prefix and postfix
+            if echo "$durl_lower" | grep -q "${prefix_lower}" && echo "$durl_lower" | grep -q "${postfix_lower}"; then
+                log_debug "Downloading(type1) ${durl}..."
+                wget --directory-prefix="${JANGBI_IT}/pkgs" "${durl}" || (log_error "error downloading ${durl}"; return 1)
+                return 0
+            fi
+        done
+
+        # Type 2: matches prefix and contains "linux"
+        echo "$possible_list" | while IFS= read -r durl; do
+            durl=$(_trim_string "${durl}")
+            durl_lower=$(echo "$durl" | tr '[:upper:]' '[:lower:]')
+            prefix_lower=$(echo "$pkgfileprefix" | tr '[:upper:]' '[:lower:]')
+
+            if echo "$durl_lower" | grep -q "${prefix_lower}" && echo "$durl_lower" | grep -q "linux"; then
+                log_debug "Downloading(type2) ${durl}..."
+                wget --directory-prefix="${JANGBI_IT}/pkgs" "${durl}" || (log_error "error downloading ${durl}"; return 1)
+                return 0
+            fi
+        done
+
+        # Type 3: matches arch1 and postfix
+        echo "$possible_list" | while IFS= read -r durl; do
+            durl=$(_trim_string "${durl}")
+            durl_lower=$(echo "$durl" | tr '[:upper:]' '[:lower:]')
+            arch1_lower=$(echo "$arch1" | tr '[:upper:]' '[:lower:]')
+            postfix_lower=$(echo "$pkgfilepostfix" | tr '[:upper:]' '[:lower:]')
+
+            if echo "$durl_lower" | grep -q "${arch1_lower}" && echo "$durl_lower" | grep -q "${postfix_lower}"; then
+                log_debug "Downloading(type3) ${durl}..."
+                wget --directory-prefix="${JANGBI_IT}/pkgs" "${durl}" || (log_error "error downloading ${durl}"; return 1)
+                return 0
+            fi
+        done
+
+        # Type 4: matches arch2 and postfix
+        echo "$possible_list" | while IFS= read -r durl; do
+            durl=$(_trim_string "${durl}")
+            durl_lower=$(echo "$durl" | tr '[:upper:]' '[:lower:]')
+            arch2_lower=$(echo "$arch2" | tr '[:upper:]' '[:lower:]')
+            postfix_lower=$(echo "$pkgfilepostfix" | tr '[:upper:]' '[:lower:]')
+
+            if echo "$durl_lower" | grep -q "${arch2_lower}" && echo "$durl_lower" | grep -q "${postfix_lower}"; then
+                log_debug "Downloading(type4) ${durl}..."
+                wget --directory-prefix="${JANGBI_IT}/pkgs" "${durl}" || (log_error "error downloading ${durl}"; return 1)
+                return 0
+            fi
+        done
+    fi
+
+    log_error "No matching package found for ${pkgfileprefix} ${arch1} ${pkgfilepostfix}"
+    return 1
+}
 
 log_info "Starting pktstat logger installation"
 
@@ -24,6 +116,15 @@ if [ "$(id -u)" -ne 0 ]; then
     log_error "This script must be run as root"
     exit 1
 fi
+
+# Check required commands
+for cmd in wget jq tar; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        log_error "Required command not found: $cmd"
+        log_error "Please install: pkg_add $cmd"
+        exit 1
+    fi
+done
 
 # Load environment variables from script's directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -57,7 +158,7 @@ else
 fi
 
 # Step 1: Check and install pktstat
-log_info "Step 1/6: Checking pktstat"
+log_info "Step 1/7: Checking pktstat"
 if ! command -v pktstat >/dev/null 2>&1; then
     log_info "pktstat not found. Installing"
     pkg_add pktstat || {
@@ -68,16 +169,78 @@ else
     log_info "pktstat already installed"
 fi
 
-# Step 2: Create log directory
+# Step 2: Download and install cdn-lookup
+log_info "Step 2/7: Checking cdn-lookup"
+if command -v cdn-lookup >/dev/null 2>&1; then
+    log_info "cdn-lookup already installed"
+else
+    log_info "cdn-lookup not found. Downloading from GitHub"
+
+    # Create temp directory
+    JANGBI_IT="/tmp/pf-install"
+    mkdir -p "$JANGBI_IT/pkgs"
+    export JANGBI_IT
+
+    # Download from GitHub (nikescar/cdn-lookup)
+    _download_github_pkgs "nikescar/cdn-lookup" "cdn-lookup*" || {
+        log_error "Failed to download cdn-lookup"
+        exit 1
+    }
+
+    # Find downloaded package
+    CDN_PKG=$(find "$JANGBI_IT/pkgs" -name "cdn-lookup*" -type f | head -1)
+    if [ -z "$CDN_PKG" ]; then
+        log_error "cdn-lookup package not found after download"
+        exit 1
+    fi
+
+    log_info "Found package: $CDN_PKG"
+
+    # Extract binary (handle tar.gz or direct binary)
+    if echo "$CDN_PKG" | grep -q "\.tar\.gz$"; then
+        log_info "Extracting tar.gz archive"
+        tar -xzf "$CDN_PKG" -C "$JANGBI_IT/pkgs/" || {
+            log_error "Failed to extract cdn-lookup"
+            exit 1
+        }
+        CDN_BIN=$(find "$JANGBI_IT/pkgs" -name "cdn-lookup" -type f -perm -100 | head -1)
+        if [ -z "$CDN_BIN" ]; then
+            # Try finding any executable in extracted files
+            CDN_BIN=$(find "$JANGBI_IT/pkgs" -type f -perm -100 | grep -i cdn-lookup | head -1)
+        fi
+    else
+        CDN_BIN="$CDN_PKG"
+    fi
+
+    if [ -z "$CDN_BIN" ]; then
+        log_error "cdn-lookup binary not found in package"
+        exit 1
+    fi
+
+    log_info "Installing binary: $CDN_BIN"
+
+    # Install to /usr/local/bin
+    install -m 755 "$CDN_BIN" /usr/local/bin/cdn-lookup || {
+        log_error "Failed to install cdn-lookup to /usr/local/bin"
+        exit 1
+    }
+
+    # Cleanup temp directory
+    rm -rf "$JANGBI_IT"
+
+    log_info "cdn-lookup installed successfully"
+fi
+
+# Step 3: Create log directory
 LOG_DIR="/var/log/pktstat"
-log_info "Step 2/6: Creating log directory"
+log_info "Step 3/7: Creating log directory"
 mkdir -p "$LOG_DIR"
 chmod 755 "$LOG_DIR"
 log_info "Created $LOG_DIR"
 
-# Step 3: Install logger script
+# Step 4: Install logger script
 LOGGER_SCRIPT="/usr/local/bin/pktstat-logger.sh"
-log_info "Step 3/6: Installing logger script"
+log_info "Step 4/7: Installing logger script"
 
 cat > "$LOGGER_SCRIPT" <<'LOGGER_EOF'
 #!/bin/ksh
@@ -293,7 +456,7 @@ chmod +x "$LOGGER_SCRIPT"
 log_info "Installed $LOGGER_SCRIPT"
 
 # Step 4: Add cron entry
-log_info "Step 4/6: Configuring cron"
+log_info "Step 5/7: Configuring cron"
 CRON_ENTRY="@reboot /usr/local/bin/pktstat-logger.sh >/dev/null 2>&1 &"
 
 # Check if entry already exists
@@ -306,7 +469,7 @@ else
 fi
 
 # Step 5: Start logger
-log_info "Step 5/6: Starting logger"
+log_info "Step 6/7: Starting logger"
 
 # Kill existing logger if running
 log_info "Killing existing logger processes..."
@@ -346,7 +509,7 @@ else
 fi
 
 # Step 6: Verify installation
-log_info "Step 6/6: Verifying installation"
+log_info "Step 7/7: Verifying installation"
 
 # Check if process is running
 if ps -p "$LOGGER_PID" >/dev/null 2>&1; then

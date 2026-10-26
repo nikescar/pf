@@ -1,8 +1,4 @@
-
 .env
-blocklist.2*
+input/
+output/
 tmp/
-ip2asn*
-inbound.txt
-outbound.txt
-blocklist.bak*
