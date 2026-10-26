@@ -86,26 +86,31 @@ EOF
     # Try matching strategies in order of preference
     local download_url=""
 
-    # Strategy 1: OS + arch + prefix (e.g., openbsd-amd64-cdn-lookup)
+    # Strategy 1: prefix + openbsd + arch
     download_url=$(echo "$asset_list" | while IFS= read -r url; do
         url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
         prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
-        if echo "$url_lower" | grep -qE "${os_name}.*(${arch1}|${arch_normalized})|${prefix_lower}"; then
-            # Filter out wrong OS (android, darwin, windows)
-            if ! echo "$url_lower" | grep -qE "android|darwin|windows|macos"; then
+        # Must have: prefix AND openbsd AND (x86_64 OR amd64)
+        # Must not have: aarch64, arm64, arm
+        if echo "$url_lower" | grep -q "${prefix_lower}" && \
+           echo "$url_lower" | grep -q "openbsd" && \
+           echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
+            if ! echo "$url_lower" | grep -qE "aarch64|arm64|arm"; then
                 echo "$url"
                 break
             fi
         fi
     done)
 
-    # Strategy 2: prefix + BSD
+    # Strategy 2: prefix + bsd + arch
     if [ -z "$download_url" ]; then
         download_url=$(echo "$asset_list" | while IFS= read -r url; do
             url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
             prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
-            if echo "$url_lower" | grep -q "${prefix_lower}" && echo "$url_lower" | grep -qE "bsd"; then
-                if ! echo "$url_lower" | grep -q "android"; then
+            if echo "$url_lower" | grep -q "${prefix_lower}" && \
+               echo "$url_lower" | grep -q "bsd" && \
+               echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
+                if ! echo "$url_lower" | grep -qE "aarch64|arm64|arm|android"; then
                     echo "$url"
                     break
                 fi
@@ -113,13 +118,15 @@ EOF
         done)
     fi
 
-    # Strategy 3: prefix + arch (any OS)
+    # Strategy 3: prefix + linux + arch (not arm)
     if [ -z "$download_url" ]; then
         download_url=$(echo "$asset_list" | while IFS= read -r url; do
             url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
             prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
-            if echo "$url_lower" | grep -q "${prefix_lower}" && echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
-                if ! echo "$url_lower" | grep -qE "android|arm"; then
+            if echo "$url_lower" | grep -q "${prefix_lower}" && \
+               echo "$url_lower" | grep -q "linux" && \
+               echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
+                if ! echo "$url_lower" | grep -qE "aarch64|arm64|arm|android"; then
                     echo "$url"
                     break
                 fi
@@ -127,13 +134,14 @@ EOF
         done)
     fi
 
-    # Strategy 4: just prefix + linux
+    # Strategy 4: prefix + arch (any OS, not arm)
     if [ -z "$download_url" ]; then
         download_url=$(echo "$asset_list" | while IFS= read -r url; do
             url_lower=$(echo "$url" | tr '[:upper:]' '[:lower:]')
             prefix_lower=$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')
-            if echo "$url_lower" | grep -q "${prefix_lower}" && echo "$url_lower" | grep -q "linux"; then
-                if ! echo "$url_lower" | grep -qE "android|arm"; then
+            if echo "$url_lower" | grep -q "${prefix_lower}" && \
+               echo "$url_lower" | grep -qE "${arch1}|${arch_normalized}"; then
+                if ! echo "$url_lower" | grep -qE "aarch64|arm64|arm|android|darwin|windows|macos"; then
                     echo "$url"
                     break
                 fi
