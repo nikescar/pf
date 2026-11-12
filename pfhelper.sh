@@ -222,11 +222,31 @@ generate_pf_config() {
     [ "${PF_BLOCK_PIM:-0}" -eq 0 ] && \
         sed -i '/^### PROTO_PIM_START ###/,/^### PROTO_PIM_END ###/d' "$tmp_file"
 
+    # Process custom PF rules
+    if [ -n "${PF_CUSTOM_RULES:-}" ]; then
+        log_info "Injecting custom PF rules"
+        # Convert semicolons to newlines and escape for sed
+        custom_rules=$(echo "$PF_CUSTOM_RULES" | sed 's/;/\n/g' | sed 's/[&/\]/\\&/g')
+        # Replace the CUSTOM_RULES section with actual rules
+        sed -i "/^### CUSTOM_RULES_START ###/,/^### CUSTOM_RULES_END ###/{
+            /^### CUSTOM_RULES_START ###/!{
+                /^### CUSTOM_RULES_END ###/!d
+            }
+            /^### CUSTOM_RULES_END ###/i\\
+$custom_rules
+        }" "$tmp_file"
+    else
+        # Remove custom rules section if empty
+        sed -i '/^### CUSTOM_RULES_START ###/,/^### CUSTOM_RULES_END ###/d' "$tmp_file"
+    fi
+
     # Remove all remaining security and protocol markers
     sed -i '/^### SEC_.*_START ###/d' "$tmp_file"
     sed -i '/^### SEC_.*_END ###/d' "$tmp_file"
     sed -i '/^### PROTO_.*_START ###/d' "$tmp_file"
     sed -i '/^### PROTO_.*_END ###/d' "$tmp_file"
+    sed -i '/^### CUSTOM_.*_START ###/d' "$tmp_file"
+    sed -i '/^### CUSTOM_.*_END ###/d' "$tmp_file"
 
     # Write output
     mv "$tmp_file" "$OUTPUT"

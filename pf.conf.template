@@ -260,3 +260,10 @@ pass out proto icmp all icmp-type $icmp_types nat-to $isp keep state
 #WARNING: This line allows sessions from any port the WAN. Enable this line only for troubleshooting purposes
 #pass out from $lan:network to any nat-to $isp keep state
 ### LAN_END ###
+
+##################
+#Custom Rules    #
+##################
+### CUSTOM_RULES_START ###
+# User-defined custom rules from .env PF_CUSTOM_RULES
+### CUSTOM_RULES_END ###
