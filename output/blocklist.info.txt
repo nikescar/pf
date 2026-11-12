@@ -1,11 +1,11 @@
 # PF Blocklist Info - Provider-based
-# Total entries: 62895
+# Total entries: 63588
 
 ## Per-category breakdown:
-  - threat: 13 sources, 72005 IPs
+  - threat: 13 sources, 70557 IPs
   - monitor: 14 sources, 2054 IPs
-  - security: 4 sources, 161 IPs
-  - crawler: 13 sources, 5131 IPs
+  - security: 4 sources, 173 IPs
+  - crawler: 13 sources, 5140 IPs
 
 ## Per-source details:
   - crawler_amazonbot                            3131 IPs
@@ -18,9 +18,9 @@
   - crawler_duckduckbot                           484 IPs
   - crawler_googlebot                              37 IPs
   - crawler_googlesc                              136 IPs
-  - crawler_googleutf                             534 IPs
-  - crawler_gptbot                                265 IPs
-  - crawler_perplexitybot                          12 IPs
+  - crawler_googleutf                             544 IPs
+  - crawler_gptbot                                267 IPs
+  - crawler_perplexitybot                           9 IPs
   - monitor_betterstack                            25 IPs
   - monitor_checkly                               159 IPs
   - monitor_grafana                                68 IPs
@@ -38,17 +38,17 @@
   - security_imperva                               11 IPs
   - security_stormwall                              9 IPs
   - security_sucuri                                11 IPs
-  - security_zscaler                              130 IPs
-  - threat_binarydefense                          540 IPs
-  - threat_blocklistde                          23447 IPs
+  - security_zscaler                              142 IPs
+  - threat_binarydefense                         1001 IPs
+  - threat_blocklistde                          26100 IPs
   - threat_cinsscore                            15000 IPs
-  - threat_cymru                                 3031 IPs
+  - threat_cymru                                 3017 IPs
   - threat_dshield                                 20 IPs
-  - threat_emergingthreats                        482 IPs
+  - threat_emergingthreats                        487 IPs
   - threat_feodo                                    5 IPs
-  - threat_greensnow                             5193 IPs
-  - threat_ipsum                                19922 IPs
-  - threat_spamhaus                              1687 IPs
+  - threat_greensnow                             3322 IPs
+  - threat_ipsum                                17172 IPs
+  - threat_spamhaus                              1755 IPs
   - threat_stalkerware                             69 IPs
   - threat_stopforumspam                           60 IPs
   - threat_threatfox                             2549 IPs
