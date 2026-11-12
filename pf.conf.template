@@ -114,26 +114,26 @@ match in on $isp scrub (max-mss PF_MAX_MSS)
 
 ### PROTO_ICMP_START ###
 # Block ICMP (proto 1) - ping, traceroute, PMTU discovery
-block drop in on $isp proto icmp
-block drop out on $isp proto icmp
+block drop in quick on $isp proto icmp
+block drop out quick on $isp proto icmp
 ### PROTO_ICMP_END ###
 
 ### PROTO_IGMP_START ###
 # Block IGMP (proto 2) - multicast group management
-block drop in on $isp proto igmp
-block drop out on $isp proto igmp
+block drop in quick on $isp proto igmp
+block drop out quick on $isp proto igmp
 ### PROTO_IGMP_END ###
 
 ### PROTO_OSPF_START ###
 # Block OSPF (proto 89) - dynamic routing protocol
-block drop in on $isp proto 89
-block drop out on $isp proto 89
+block drop in quick on $isp proto 89
+block drop out quick on $isp proto 89
 ### PROTO_OSPF_END ###
 
 ### PROTO_PIM_START ###
 # Block PIM (proto 103) - multicast routing
-block drop in on $isp proto 103
-block drop out on $isp proto 103
+block drop in quick on $isp proto 103
+block drop out quick on $isp proto 103
 ### PROTO_PIM_END ###
 
 ### SEC_SCANNER_START ###
