@@ -225,8 +225,8 @@ generate_pf_config() {
     # Process custom PF rules
     if [ -n "${PF_CUSTOM_RULES:-}" ]; then
         log_info "Injecting custom PF rules"
-        # Convert semicolons to newlines and escape for sed
-        custom_rules=$(echo "$PF_CUSTOM_RULES" | sed 's/;/\n/g' | sed 's/[&/\]/\\&/g')
+        # Convert semicolons to newlines and escape for sed (use tr for BSD sed compat)
+        custom_rules=$(echo "$PF_CUSTOM_RULES" | tr ';' '\n' | sed 's/[&/\]/\\&/g')
         # Replace the CUSTOM_RULES section with actual rules
         sed -i "/^### CUSTOM_RULES_START ###/,/^### CUSTOM_RULES_END ###/{
             /^### CUSTOM_RULES_START ###/!{
