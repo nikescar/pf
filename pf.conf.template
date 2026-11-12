@@ -165,6 +165,10 @@ antispoof quick for lo0
 ##################
 #INPUT rules     #
 ##################
+### CUSTOM_RULES_START ###
+# User-defined custom rules from .env PF_CUSTOM_RULES
+### CUSTOM_RULES_END ###
+
 #[WAN <- Martians & Provider blocklists]
 #Block packets from wrong address ranges
 block drop in quick on $isp from <martians> to any
@@ -222,6 +226,10 @@ antispoof quick for { lo $lan }
 ##################
 #OUTPUT rules    #
 ##################
+### CUSTOM_RULES_START ###
+# User-defined custom rules from .env PF_CUSTOM_RULES
+### CUSTOM_RULES_END ###
+
 #[WAN -> Martians & Provider blocklists]
 #Do not sent RFC1918 IP-addresses over the WAN
 block drop out quick on $isp from any to <martians>
@@ -260,10 +268,3 @@ pass out proto icmp all icmp-type $icmp_types nat-to $isp keep state
 #WARNING: This line allows sessions from any port the WAN. Enable this line only for troubleshooting purposes
 #pass out from $lan:network to any nat-to $isp keep state
 ### LAN_END ###
-
-##################
-#Custom Rules    #
-##################
-### CUSTOM_RULES_START ###
-# User-defined custom rules from .env PF_CUSTOM_RULES
-### CUSTOM_RULES_END ###
