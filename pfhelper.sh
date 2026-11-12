@@ -225,16 +225,16 @@ generate_pf_config() {
     # Process custom PF rules
     if [ -n "${PF_CUSTOM_RULES:-}" ]; then
         log_info "Injecting custom PF rules"
-        # Convert semicolons to newlines and escape for sed (use tr for BSD sed compat)
-        custom_rules=$(echo "$PF_CUSTOM_RULES" | tr ';' '\n' | sed 's/[&/\]/\\&/g')
-        # Replace the CUSTOM_RULES section with actual rules
-        sed -i "/^### CUSTOM_RULES_START ###/,/^### CUSTOM_RULES_END ###/{
-            /^### CUSTOM_RULES_START ###/!{
-                /^### CUSTOM_RULES_END ###/!d
-            }
-            /^### CUSTOM_RULES_END ###/i\\
-$custom_rules
-        }" "$tmp_file"
+        # Convert semicolons to newlines
+        custom_rules=$(echo "$PF_CUSTOM_RULES" | tr ';' '\n')
+
+        # Use awk for portable multi-line insertion
+        awk -v rules="$custom_rules" '
+            /^### CUSTOM_RULES_START ###/ { print; print rules; in_block=1; next }
+            /^### CUSTOM_RULES_END ###/ { in_block=0 }
+            !in_block { print }
+        ' "$tmp_file" > "$tmp_file.new"
+        mv "$tmp_file.new" "$tmp_file"
     else
         # Remove custom rules section if empty
         sed -i '/^### CUSTOM_RULES_START ###/,/^### CUSTOM_RULES_END ###/d' "$tmp_file"
