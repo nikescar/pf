@@ -209,9 +209,24 @@ generate_pf_config() {
     [ "${PF_GUARD_PORT_SCANNER:-0}" -eq 0 ] && \
         sed -i '/^### SEC_SCANNER_START ###/,/^### SEC_SCANNER_END ###/d' "$tmp_file"
 
-    # Remove all remaining security markers
+    # Remove disabled protocol blocking sections
+    [ "${PF_BLOCK_ICMP:-0}" -eq 0 ] && \
+        sed -i '/^### PROTO_ICMP_START ###/,/^### PROTO_ICMP_END ###/d' "$tmp_file"
+
+    [ "${PF_BLOCK_IGMP:-0}" -eq 0 ] && \
+        sed -i '/^### PROTO_IGMP_START ###/,/^### PROTO_IGMP_END ###/d' "$tmp_file"
+
+    [ "${PF_BLOCK_OSPF:-0}" -eq 0 ] && \
+        sed -i '/^### PROTO_OSPF_START ###/,/^### PROTO_OSPF_END ###/d' "$tmp_file"
+
+    [ "${PF_BLOCK_PIM:-0}" -eq 0 ] && \
+        sed -i '/^### PROTO_PIM_START ###/,/^### PROTO_PIM_END ###/d' "$tmp_file"
+
+    # Remove all remaining security and protocol markers
     sed -i '/^### SEC_.*_START ###/d' "$tmp_file"
     sed -i '/^### SEC_.*_END ###/d' "$tmp_file"
+    sed -i '/^### PROTO_.*_START ###/d' "$tmp_file"
+    sed -i '/^### PROTO_.*_END ###/d' "$tmp_file"
 
     # Write output
     mv "$tmp_file" "$OUTPUT"
