@@ -310,7 +310,7 @@ cleanup_old_logs() {
 
 # Function: Run pktstat and process output
 run_pktstat() {
-    pktstat -i "$MONITOR_INTERFACE" -F -1 -w 5 -T -n "not (ip proto 89 or ip proto 1 or ip proto 2 or ip proto 103)" 2>/dev/null | \
+    pktstat -i "$MONITOR_INTERFACE" -F -1 -w 5 -T -n 2>/dev/null | \
     while read -r bytes packets proto left arrow right rest; do
         # Skip lines without proper format
         [ -z "$right" ] && continue
